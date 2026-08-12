@@ -7,7 +7,7 @@ A macOS-first React + Tauri prototype for effortless local audio stem separation
 - Audio and video drag-and-drop, file picking, and recursive folder import
 - Vocals, instrumental, drums, bass, guitar, piano, strings, and other stem choices
 - Automatic multi-model planning from a replaceable JSON catalog
-- Local processing through [`python-audio-separator`](https://github.com/nomadkaraoke/python-audio-separator)
+- Local processing through the [`HAGerox/python-audio-separator`](https://github.com/HAGerox/python-audio-separator/tree/personal/pr298-pr299-combined) combined PR 298 + 299 build
 - Automatic first-use engine provisioning through `uvx`
 - WAV output at 44.1 kHz, written to a `Stem Separator` folder beside the source
 - MP4/MOV audio extraction and optional per-stem video remuxing through FFmpeg
@@ -32,7 +32,9 @@ npm install
 npm run tauri:dev
 ```
 
-The first real separation can take substantially longer because `uvx` prepares the Python 3.12 environment and the selected model files download. Later runs reuse the environment/model caches. The managed command currently pins the tested `audio-separator 0.44.5`, supplies `audioread`, and pins `librosa<0.11`; the upstream CPU package omits the former and still calls an API removed in librosa 0.11.
+The first real separation can take substantially longer because `uvx` prepares the Python 3.12 environment and the selected model files download. Later runs reuse the environment/model caches. The managed command pins commit `f0dd3f0` from `personal/pr298-pr299-combined`, which combines upstream PR 298's accelerated PyTorch paths with PR 299's MSST MDXC inference-default fixes. It also supplies `audioread` and pins `librosa<0.11` for compatibility.
+
+On Apple Silicon macOS, the app passes `--use_torch_compile` on every separation. PR 298 enables regional `torch.compile` for verified MPS RoFormer paths and safely warns and falls back to eager inference for model/device combinations that do not support compilation. A new model or input shape can incur a one-time compilation cost before warm runs benefit.
 
 To preview only the interface in a browser:
 
@@ -86,4 +88,4 @@ cd src-tauri && cargo check
 
 The interface was also exercised through select, expanded stems, progress, stop confirmation, results, and dark appearance states in the shared preview.
 
-The managed runtime was provisioned against `audio-separator 0.44.5`, the catalog's BS-Roformer Viperx model was downloaded, and a two-second synthetic stereo file was separated end to end with Apple Silicon MPS/CoreML available. The resulting WAV probed as stereo PCM at 44.1 kHz with the exact two-second source duration.
+The original managed runtime was provisioned against `audio-separator 0.44.5`, the catalog's BS-Roformer Viperx model was downloaded, and a two-second synthetic stereo file was separated end to end with Apple Silicon MPS/CoreML available. The custom combined-PR runtime is now pinned separately as described above.

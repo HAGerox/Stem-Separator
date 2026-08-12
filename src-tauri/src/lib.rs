@@ -15,6 +15,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma",
 ];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
+const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@f0dd3f07953b2712b2a05a437716ad3cbaf8cea0";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -245,13 +246,6 @@ fn available(command: &str) -> bool {
 }
 
 fn separator_engine() -> Option<EngineCommand> {
-    if let Some(path) = command_path("audio-separator") {
-        return Some(EngineCommand {
-            program: path,
-            prefix_args: vec![],
-            label: "Audio Separator".into(),
-        });
-    }
     if let Some(path) = command_path("uvx") {
         return Some(EngineCommand {
             program: path,
@@ -263,10 +257,10 @@ fn separator_engine() -> Option<EngineCommand> {
                 "--with".into(),
                 "librosa<0.11".into(),
                 "--from".into(),
-                "audio-separator[cpu]==0.44.5".into(),
+                AUDIO_SEPARATOR_FORK.into(),
                 "audio-separator".into(),
             ],
-            label: "Audio Separator · managed on first use".into(),
+            label: "Audio Separator · HAGerox PR 298 + 299".into(),
         });
     }
     None
@@ -274,23 +268,20 @@ fn separator_engine() -> Option<EngineCommand> {
 
 #[tauri::command]
 fn detect_environment() -> EnvironmentStatus {
-    let separator = available("audio-separator");
     let uv = available("uvx");
     EnvironmentStatus {
         is_tauri: true,
         ffmpeg_available: available("ffmpeg"),
         ffprobe_available: available("ffprobe"),
-        separator_available: separator,
+        separator_available: uv,
         uv_available: uv,
-        engine_label: if separator {
-            "Audio Separator · ready".into()
-        } else if uv {
-            "Audio Separator · installs on first use".into()
+        engine_label: if uv {
+            "Audio Separator · custom PR 298 + 299 build".into()
         } else {
             "Audio Separator · setup required".into()
         },
         acceleration: if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-            "Apple Silicon · CoreML when supported".into()
+            "Apple Silicon · compiled MPS / CoreML".into()
         } else {
             "Local processing".into()
         },
@@ -444,7 +435,9 @@ async fn run_separator(
     let inherited_path = std::env::var_os("PATH").unwrap_or_default();
     let mut executable_paths = Vec::new();
     for tool in ["ffmpeg", "ffprobe"] {
-        if let Some(directory) = command_path(tool).and_then(|path| path.parent().map(Path::to_path_buf)) {
+        if let Some(directory) =
+            command_path(tool).and_then(|path| path.parent().map(Path::to_path_buf))
+        {
             if !executable_paths.contains(&directory) {
                 executable_paths.push(directory);
             }
@@ -474,12 +467,15 @@ async fn run_separator(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    command.arg("--use_torch_compile");
+
     let child = command
         .spawn()
         .map_err(|error| format!("Could not start {}: {error}", engine.label))?;
-    let pid = child
-        .id()
-        .ok_or_else(|| "The separation process did not provide a process identifier.".to_string())?;
+    let pid = child.id().ok_or_else(|| {
+        "The separation process did not provide a process identifier.".to_string()
+    })?;
     let _active_guard = register_active_process(active_job, job_id, pid)?;
     let output_future = child.wait_with_output();
     tokio::pin!(output_future);
@@ -509,12 +505,28 @@ async fn run_separator(
     };
 
     if output.status.success() {
-        emit_progress(app, JobProgress {
-            job_id: job_id.into(), overall: (base + model_share).min(97.0),
-            file_index, file_count, stage: format!("Finished {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
-            detail: format!("{} completed", run.model_name), model_name: Some(run.model_name.clone()),
-            model_index: Some(model_index), model_count: Some(model_count), eta_seconds: None,
-        });
+        emit_progress(
+            app,
+            JobProgress {
+                job_id: job_id.into(),
+                overall: (base + model_share).min(97.0),
+                file_index,
+                file_count,
+                stage: format!(
+                    "Finished {}",
+                    run.stems
+                        .iter()
+                        .map(|stem| title_case(stem))
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                ),
+                detail: format!("{} completed", run.model_name),
+                model_name: Some(run.model_name.clone()),
+                model_index: Some(model_index),
+                model_count: Some(model_count),
+                eta_seconds: None,
+            },
+        );
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -876,8 +888,7 @@ async fn process_job(
                         overall: file_base
                             + file_share
                                 * (0.94
-                                    + 0.05 * stem_index as f64
-                                        / request.stems.len().max(1) as f64),
+                                    + 0.05 * stem_index as f64 / request.stems.len().max(1) as f64),
                         file_index,
                         file_count,
                         stage: format!("Creating {} video", title_case(stem)),
