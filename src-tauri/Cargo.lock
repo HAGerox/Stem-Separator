@@ -2928,8 +2928,9 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stem-separator"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "tauri",

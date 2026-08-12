@@ -39,6 +39,11 @@ export async function processJob(payload: {
   return invoke<ProcessResult>("process_job", { request: payload });
 }
 
+export async function cancelJob(jobId?: string): Promise<boolean> {
+  if (!inTauri) return true;
+  return invoke<boolean>("cancel_job", { jobId });
+}
+
 export async function revealPath(path: string): Promise<void> {
   if (!inTauri) return;
   await invoke("reveal_path", { path });

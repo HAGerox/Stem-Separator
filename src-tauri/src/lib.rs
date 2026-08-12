@@ -4,9 +4,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{process::Command as TokioCommand, time};
 use walkdir::WalkDir;
 
@@ -100,6 +101,126 @@ struct EngineCommand {
     program: PathBuf,
     prefix_args: Vec<String>,
     label: String,
+}
+
+#[derive(Default)]
+struct ActiveJob {
+    state: Arc<Mutex<ActiveJobState>>,
+}
+
+#[derive(Default)]
+struct ActiveJobState {
+    job_id: Option<String>,
+    pid: Option<u32>,
+    cancelled: bool,
+}
+
+struct ActiveJobGuard {
+    state: Arc<Mutex<ActiveJobState>>,
+    job_id: String,
+}
+
+struct ActiveProcessGuard {
+    state: Arc<Mutex<ActiveJobState>>,
+    job_id: String,
+    pid: u32,
+}
+
+impl Drop for ActiveJobGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.state.lock() {
+            if active.job_id.as_ref() == Some(&self.job_id) {
+                *active = ActiveJobState::default();
+            }
+        }
+    }
+}
+
+impl Drop for ActiveProcessGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.state.lock() {
+            if active.job_id.as_ref() == Some(&self.job_id) && active.pid == Some(self.pid) {
+                active.pid = None;
+            }
+        }
+    }
+}
+
+fn register_active_job(state: &ActiveJob, job_id: &str) -> Result<ActiveJobGuard, String> {
+    let mut active = state
+        .state
+        .lock()
+        .map_err(|_| "Could not track the active separation job.".to_string())?;
+    *active = ActiveJobState {
+        job_id: Some(job_id.into()),
+        pid: None,
+        cancelled: false,
+    };
+    Ok(ActiveJobGuard {
+        state: state.state.clone(),
+        job_id: job_id.into(),
+    })
+}
+
+fn ensure_job_running(state: &ActiveJob, job_id: &str) -> Result<(), String> {
+    let active = state
+        .state
+        .lock()
+        .map_err(|_| "Could not check the active separation job.".to_string())?;
+    if active.job_id.as_deref() == Some(job_id) && active.cancelled {
+        Err("Separation stopped.".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn register_active_process(
+    state: &ActiveJob,
+    job_id: &str,
+    pid: u32,
+) -> Result<ActiveProcessGuard, String> {
+    let mut active = state
+        .state
+        .lock()
+        .map_err(|_| "Could not track the active separation process.".to_string())?;
+    if active.job_id.as_deref() != Some(job_id) {
+        return Err("The separation job is no longer active.".into());
+    }
+    if active.cancelled {
+        drop(active);
+        let _ = stop_process_tree(pid);
+        return Err("Separation stopped.".into());
+    }
+    active.pid = Some(pid);
+    Ok(ActiveProcessGuard {
+        state: state.state.clone(),
+        job_id: job_id.into(),
+        pid,
+    })
+}
+
+#[cfg(unix)]
+fn stop_process_tree(pid: u32) -> Result<(), String> {
+    let group_id = -(pid as i32);
+    let result = unsafe { libc::kill(group_id, libc::SIGTERM) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().to_string())
+    }
+}
+
+#[cfg(windows)]
+fn stop_process_tree(pid: u32) -> Result<(), String> {
+    let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()
+        .map_err(|error| format!("Could not stop the separation process: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Windows could not stop the separation process.".into())
+    }
 }
 
 fn command_path(command: &str) -> Option<PathBuf> {
@@ -305,6 +426,7 @@ fn extract_audio(source: &Path, target: &Path) -> Result<(), String> {
 
 async fn run_separator(
     app: &AppHandle,
+    active_job: &ActiveJob,
     job_id: &str,
     engine: &EngineCommand,
     input: &Path,
@@ -317,6 +439,21 @@ async fn run_separator(
     model_count: usize,
 ) -> Result<(), String> {
     let mut command = TokioCommand::new(&engine.program);
+    #[cfg(unix)]
+    command.process_group(0);
+    let inherited_path = std::env::var_os("PATH").unwrap_or_default();
+    let mut executable_paths = Vec::new();
+    for tool in ["ffmpeg", "ffprobe"] {
+        if let Some(directory) = command_path(tool).and_then(|path| path.parent().map(Path::to_path_buf)) {
+            if !executable_paths.contains(&directory) {
+                executable_paths.push(directory);
+            }
+        }
+    }
+    executable_paths.extend(std::env::split_paths(&inherited_path));
+    if let Ok(path) = std::env::join_paths(executable_paths) {
+        command.env("PATH", path);
+    }
     command
         .args(&engine.prefix_args)
         .arg(input)
@@ -340,22 +477,29 @@ async fn run_separator(
     let child = command
         .spawn()
         .map_err(|error| format!("Could not start {}: {error}", engine.label))?;
+    let pid = child
+        .id()
+        .ok_or_else(|| "The separation process did not provide a process identifier.".to_string())?;
+    let _active_guard = register_active_process(active_job, job_id, pid)?;
     let output_future = child.wait_with_output();
     tokio::pin!(output_future);
     let mut interval = time::interval(std::time::Duration::from_millis(700));
-    let file_share = 84.0 / file_count.max(1) as f64;
-    let model_share = file_share / model_count.max(1) as f64;
-    let base =
-        7.0 + file_index as f64 * file_share + model_index.saturating_sub(1) as f64 * model_share;
+    let file_share = 96.0 / file_count.max(1) as f64;
+    let model_region = file_share * 0.86;
+    let model_share = model_region / model_count.max(1) as f64;
+    let base = 1.0
+        + file_index as f64 * file_share
+        + file_share * 0.06
+        + model_index.saturating_sub(1) as f64 * model_share;
     let mut local_progress = 0.0_f64;
 
     let output = loop {
         tokio::select! {
             result = &mut output_future => break result.map_err(|error| format!("Separation process failed: {error}"))?,
             _ = interval.tick() => {
-                local_progress = (local_progress + (94.0 - local_progress) * 0.025).min(92.0);
+                local_progress = (local_progress + 0.22).min(92.0);
                 emit_progress(app, JobProgress {
-                    job_id: job_id.into(), overall: (base + model_share * local_progress / 100.0).min(91.0),
+                    job_id: job_id.into(), overall: (base + model_share * local_progress / 100.0).min(97.0),
                     file_index, file_count, stage: format!("Separating {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
                     detail: format!("{} · running locally", run.model_name), model_name: Some(run.model_name.clone()),
                     model_index: Some(model_index), model_count: Some(model_count), eta_seconds: None,
@@ -365,6 +509,12 @@ async fn run_separator(
     };
 
     if output.status.success() {
+        emit_progress(app, JobProgress {
+            job_id: job_id.into(), overall: (base + model_share).min(97.0),
+            file_index, file_count, stage: format!("Finished {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
+            detail: format!("{} completed", run.model_name), model_name: Some(run.model_name.clone()),
+            model_index: Some(model_index), model_count: Some(model_count), eta_seconds: None,
+        });
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -537,7 +687,11 @@ fn make_video(
 }
 
 #[tauri::command]
-async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessResult, String> {
+async fn process_job(
+    app: AppHandle,
+    active_job: State<'_, ActiveJob>,
+    request: ProcessRequest,
+) -> Result<ProcessResult, String> {
     if !available("ffmpeg") || !available("ffprobe") {
         return Err(
             "FFmpeg and FFprobe are required. Install them with Homebrew: brew install ffmpeg"
@@ -563,6 +717,7 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
             .unwrap_or_default()
             .as_millis()
     );
+    let _job_guard = register_active_job(active_job.inner(), &job_id)?;
     let cache_root = app
         .path()
         .app_cache_dir()
@@ -591,8 +746,11 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
     let mut warnings = Vec::new();
     let file_count = inputs.len();
     let model_count = request.plan.len();
+    let file_share = 96.0 / file_count.max(1) as f64;
 
     for (file_index, source) in inputs.iter().enumerate() {
+        ensure_job_running(active_job.inner(), &job_id)?;
+        let file_base = 1.0 + file_index as f64 * file_share;
         let source_name = source
             .file_name()
             .and_then(|value| value.to_str())
@@ -613,7 +771,7 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
                 &app,
                 JobProgress {
                     job_id: job_id.clone(),
-                    overall: 4.0,
+                    overall: file_base + file_share * 0.02,
                     file_index,
                     file_count,
                     stage: "Preparing video audio".into(),
@@ -626,17 +784,20 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
             );
             let extracted = file_work.join("source-audio.wav");
             extract_audio(source, &extracted)?;
+            ensure_job_running(active_job.inner(), &job_id)?;
             extracted
         } else {
             source.clone()
         };
 
         for (index, run) in request.plan.iter().enumerate() {
+            ensure_job_running(active_job.inner(), &job_id)?;
             let run_dir = file_work.join(format!("model-{index}"));
             fs::create_dir_all(&run_dir)
                 .map_err(|error| format!("Could not create a model workspace: {error}"))?;
             run_separator(
                 &app,
+                active_job.inner(),
                 &job_id,
                 &engine,
                 &separation_input,
@@ -659,7 +820,24 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
         fs::create_dir_all(&source_output_dir)
             .map_err(|error| format!("Could not create an output folder: {error}"))?;
 
-        for stem in &request.stems {
+        emit_progress(
+            &app,
+            JobProgress {
+                job_id: job_id.clone(),
+                overall: file_base + file_share * 0.93,
+                file_index,
+                file_count,
+                stage: "Finishing up".into(),
+                detail: format!("Aligning and writing outputs for {source_name}"),
+                model_name: None,
+                model_index: Some(model_count),
+                model_count: Some(model_count),
+                eta_seconds: None,
+            },
+        );
+
+        for (stem_index, stem) in request.stems.iter().enumerate() {
+            ensure_job_running(active_job.inner(), &job_id)?;
             let run_index = request.plan.iter().position(|run| run.stems.contains(stem));
             let found = run_index
                 .and_then(|index| find_stem_file(&file_work.join(format!("model-{index}")), stem));
@@ -671,6 +849,7 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
             let wav_path =
                 unique_path(source_output_dir.join(format!("{}_{}.wav", source_base, stem)));
             align_wav(&found, &wav_path, duration)?;
+            ensure_job_running(active_job.inner(), &job_id)?;
             let wav_name = wav_path
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -690,9 +869,30 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
             }
 
             if request.keep_video && is_video(source) {
+                emit_progress(
+                    &app,
+                    JobProgress {
+                        job_id: job_id.clone(),
+                        overall: file_base
+                            + file_share
+                                * (0.94
+                                    + 0.05 * stem_index as f64
+                                        / request.stems.len().max(1) as f64),
+                        file_index,
+                        file_count,
+                        stage: format!("Creating {} video", title_case(stem)),
+                        detail: "Replacing the source soundtrack without re-encoding the picture"
+                            .into(),
+                        model_name: None,
+                        model_index: Some(model_count),
+                        model_count: Some(model_count),
+                        eta_seconds: None,
+                    },
+                );
                 let video_path =
                     unique_path(source_output_dir.join(format!("{}_{}.mp4", source_base, stem)));
                 make_video(source, &wav_path, &video_path, duration)?;
+                ensure_job_running(active_job.inner(), &job_id)?;
                 let video_name = video_path
                     .file_name()
                     .and_then(|value| value.to_str())
@@ -735,6 +935,31 @@ async fn process_job(app: AppHandle, request: ProcessRequest) -> Result<ProcessR
 }
 
 #[tauri::command]
+fn cancel_job(active_job: State<'_, ActiveJob>, job_id: Option<String>) -> Result<bool, String> {
+    let pid = {
+        let mut active = active_job
+            .state
+            .lock()
+            .map_err(|_| "Could not access the active separation job.".to_string())?;
+        let Some(active_id) = active.job_id.as_ref() else {
+            return Ok(false);
+        };
+        if job_id
+            .as_ref()
+            .is_some_and(|requested| requested != active_id)
+        {
+            return Ok(false);
+        }
+        active.cancelled = true;
+        active.pid
+    };
+    if let Some(pid) = pid {
+        stop_process_tree(pid)?;
+    }
+    Ok(true)
+}
+
+#[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     if path.trim().is_empty() {
         return Ok(());
@@ -766,11 +991,13 @@ fn reveal_path(path: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ActiveJob::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             detect_environment,
             resolve_inputs,
             process_job,
+            cancel_job,
             reveal_path
         ])
         .run(tauri::generate_context!())

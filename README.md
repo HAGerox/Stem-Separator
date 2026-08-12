@@ -12,7 +12,9 @@ A macOS-first React + Tauri prototype for effortless local audio stem separation
 - WAV output at 44.1 kHz, written to a `Stem Separator` folder beside the source
 - MP4/MOV audio extraction and optional per-stem video remuxing through FFmpeg
 - Source-duration probing plus output padding/trimming before video remuxing
-- File/model-aware progress UI, expandable technical details, result playback, and Finder reveal
+- Linear file/model-aware progress, expandable technical details, confirmed process cancellation, result playback, and Finder reveal
+- System light/dark appearance, a draggable macOS title bar, and an extensible collapsed stem picker
+- One in-app result per source/stem; video sources prefer the remuxed video while their WAV remains in Finder
 - Browser-only interface demo for fast design testing
 
 ## Run the macOS app
@@ -73,7 +75,7 @@ Media is never uploaded by this prototype.
 - Progress within one model pass is time-based because the upstream CLI does not expose a stable machine-readable percentage event stream.
 - Duration alignment is implemented; a production QA suite should additionally compare decoded sample counts and channel layouts across representative codecs and variable-frame-rate video.
 - The first catalog is a pragmatic starter, not a universal claim of quality. Separation quality varies by song, genre, arrangement, and whether the operator prioritizes fullness or low bleed.
-- App signing, notarization, automatic updates, Windows packaging, cancellation, and crash-resume are not part of this first prototype.
+- App signing, notarization, automatic updates, Windows packaging, and crash-resume are not part of this first prototype.
 
 ## Verification
 
@@ -82,6 +84,6 @@ npm run build
 cd src-tauri && cargo check
 ```
 
-The interface was also exercised through drop/select/progress/results states in the shared preview at 1280×800.
+The interface was also exercised through select, expanded stems, progress, stop confirmation, results, and dark appearance states in the shared preview.
 
 The managed runtime was provisioned against `audio-separator 0.44.5`, the catalog's BS-Roformer Viperx model was downloaded, and a two-second synthetic stereo file was separated end to end with Apple Silicon MPS/CoreML available. The resulting WAV probed as stereo PCM at 44.1 kHz with the exact two-second source duration.
