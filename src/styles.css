@@ -67,13 +67,14 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
   border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(18px);
   -webkit-user-select: none; user-select: none; cursor: default;
 }
-.traffic-light-space, .header-drag-space, .header-content, .brand-mark, .brand-name { -webkit-app-region: drag; }
-.traffic-light-space, .header-drag-space { position: absolute; inset: 0; }
+.window-control-space, .header-drag-space, .header-content, .brand-lockup, .brand-mark, .brand-name { -webkit-app-region: drag; }
+.window-control-space { position: absolute; z-index: 1; inset: 0 0 auto; height: 19px; }
+.header-drag-space { position: absolute; inset: 0; }
 .header-drag-space { z-index: 0; }
-.header-content { position: absolute; z-index: 1; left: 72px; right: 16px; inset-block: 0; display: flex; align-items: center; gap: 11px; min-width: 0; }
-.app-header.has-back .header-content { gap: 10px; }
-.brand-name { order: 2; font-weight: 700; font-size: 15px; letter-spacing: -.25px; white-space: nowrap; }
-.brand-mark { order: 1; width: 25px; height: 25px; display: flex; align-items: center; justify-content: center; gap: 2.2px; flex: 0 0 auto; }
+.header-content { position: absolute; z-index: 2; left: 18px; right: 16px; top: 33px; height: 25px; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
+.brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.25px; white-space: nowrap; }
+.brand-mark { width: 25px; height: 25px; display: flex; align-items: center; justify-content: center; gap: 2.2px; flex: 0 0 auto; }
 .brand-mark i { display: block; width: 2.6px; border-radius: 99px; background: var(--accent); }
 .brand-mark i:nth-child(1), .brand-mark i:nth-child(5) { height: 7px; opacity: .64; }
 .brand-mark i:nth-child(2), .brand-mark i:nth-child(4) { height: 15px; }
@@ -83,7 +84,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
   cursor: pointer; color: var(--muted); transition: .18s ease; -webkit-app-region: no-drag; flex: 0 0 auto;
 }
 .icon-button:hover { background: var(--hover); color: var(--ink); }
-.back-button { order: 3; margin-left: auto; }
+.back-button { margin-left: auto; }
 
 .drop-view { flex: 1; min-height: 0; display: grid; place-items: center; position: relative; transition: .2s ease; }
 .drop-view::before { content: ""; position: absolute; inset: 24px 28px 28px; border: 1.5px dashed transparent; border-radius: 28px; pointer-events: none; transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }

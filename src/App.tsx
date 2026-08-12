@@ -108,15 +108,17 @@ function Header({ view, onBack }: { view: View; onBack: () => void }) {
 
   return (
     <header className={`app-header ${showBack ? "has-back" : ""}`} data-tauri-drag-region onMouseDown={startDragging}>
-      <div className="traffic-light-space" data-tauri-drag-region />
+      <div className="window-control-space" data-tauri-drag-region />
       <div className="header-content" data-tauri-drag-region>
+        <div className="brand-lockup" data-tauri-drag-region>
+          <Logo />
+          <span className="brand-name">Stem Separator</span>
+        </div>
         {showBack && (
           <button className="icon-button back-button" onClick={onBack} aria-label="Go back">
-            <ArrowLeft size={21} />
+            <ArrowLeft size={19} strokeWidth={2} />
           </button>
         )}
-        <Logo />
-        <span className="brand-name">Stem Separator</span>
       </div>
       <div className="header-drag-space" data-tauri-drag-region />
     </header>
