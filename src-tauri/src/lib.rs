@@ -481,19 +481,19 @@ async fn run_separator(
     tokio::pin!(output_future);
     let mut interval = time::interval(std::time::Duration::from_millis(700));
     let file_share = 96.0 / file_count.max(1) as f64;
-    let model_region = file_share * 0.86;
+    let model_region = file_share * 0.92;
     let model_share = model_region / model_count.max(1) as f64;
     let base = 1.0
         + file_index as f64 * file_share
-        + file_share * 0.06
         + model_index.saturating_sub(1) as f64 * model_share;
-    let mut local_progress = 0.0_f64;
+    let progress_started = std::time::Instant::now();
 
     let output = loop {
         tokio::select! {
             result = &mut output_future => break result.map_err(|error| format!("Separation process failed: {error}"))?,
             _ = interval.tick() => {
-                local_progress = (local_progress + 0.22).min(92.0);
+                let seconds = progress_started.elapsed().as_secs_f64();
+                let local_progress = (0.6 + 0.13 * seconds + 0.0009 * seconds * seconds).min(90.0);
                 emit_progress(app, JobProgress {
                     job_id: job_id.into(), overall: (base + model_share * local_progress / 100.0).min(97.0),
                     file_index, file_count, stage: format!("Separating {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
@@ -840,7 +840,11 @@ async fn process_job(
                 file_index,
                 file_count,
                 stage: "Finishing up".into(),
-                detail: format!("Aligning and writing outputs for {source_name}"),
+                detail: if source.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("wav")) {
+                    format!("Writing WAV files for {source_name}")
+                } else {
+                    format!("Aligning and writing outputs for {source_name}")
+                },
                 model_name: None,
                 model_index: Some(model_count),
                 model_count: Some(model_count),
@@ -929,7 +933,16 @@ async fn process_job(
             file_index: file_count.saturating_sub(1),
             file_count,
             stage: "Your stems are ready".into(),
-            detail: "WAV files have been aligned and saved.".into(),
+            detail: if inputs.iter().all(|source| {
+                source
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("wav"))
+            }) {
+                "WAV files have been saved.".into()
+            } else {
+                "WAV files have been aligned and saved.".into()
+            },
             model_name: None,
             model_index: Some(model_count),
             model_count: Some(model_count),

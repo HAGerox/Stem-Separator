@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   CircleAlert,
@@ -10,7 +9,6 @@ import {
   FileVideo,
   Folder,
   FolderOpen,
-  Gauge,
   Info,
   LoaderCircle,
   MoreHorizontal,
@@ -18,7 +16,6 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Sparkles,
   Square,
   Upload,
   X,
@@ -50,10 +47,12 @@ const STEMS: StemOption[] = [
   { id: "other", label: "Other", description: "Everything not listed above", glyph: "dots", primary: false },
 ];
 
-const QUICK_CONFIGS: Array<{ label: string; stems: StemId[] }> = [
-  { label: "Vocals only", stems: ["vocals"] },
-  { label: "Instrumental only", stems: ["instrumental"] },
-  { label: "Multi-Track", stems: ["vocals", "drums", "bass", "guitar", "piano", "other"] },
+const MULTI_TRACK_STEMS: StemId[] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+
+const QUICK_CONFIGS: Array<{ label: string; description: string; detail: string; glyph: string; stems: StemId[] }> = [
+  { label: "Vocals Only", description: "Isolate lead and backing voices", detail: "Vocals", glyph: "voice", stems: ["vocals"] },
+  { label: "Instrumental Only", description: "Keep the full mix without vocals", detail: "Instrumental", glyph: "wave", stems: ["instrumental"] },
+  { label: "Multi-Track", description: "Split the complete mix into separate parts", detail: "Vocals · Drums · Bass · Guitar · Piano · Other", glyph: "multi", stems: MULTI_TRACK_STEMS },
 ];
 
 function extension(name: string) {
@@ -82,6 +81,7 @@ function exactSelection(first: StemId[], second: StemId[]) {
 }
 
 function StemGlyph({ type }: { type: string }) {
+  if (type === "multi") return <span className="glyph-multi"><i /><i /><i /><i /></span>;
   if (type === "drum") return <span className="glyph-drum"><i /><i /></span>;
   if (type === "keys") return <span className="glyph-keys">▥</span>;
   if (type === "dots") return <MoreHorizontal size={25} strokeWidth={1.8} />;
@@ -94,6 +94,46 @@ function StemGlyph({ type }: { type: string }) {
 
 function Logo() {
   return <div className="brand-mark" aria-label="Stem Separator"><i /><i /><i /><i /><i /></div>;
+}
+
+function perceptualProgress(value: number) {
+  const normalized = Math.min(1, Math.max(0, value) / 100);
+  return 100 * Math.pow(normalized, 1.14);
+}
+
+function useSmoothedProgress(progress: JobProgress) {
+  const target = perceptualProgress(progress.overall);
+  const [displayed, setDisplayed] = useState(target);
+  const jobId = progress.jobId;
+
+  useEffect(() => {
+    setDisplayed(perceptualProgress(progress.overall));
+  }, [jobId]);
+
+  useEffect(() => {
+    if (progress.overall <= 1) {
+      setDisplayed(target);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setDisplayed((current) => {
+        if (target <= current) return current;
+        const gap = target - current;
+        const concluding = progress.overall >= 100
+          || progress.stage === "Finishing up"
+          || progress.stage.startsWith("Finished ")
+          || progress.stage.startsWith("Creating ");
+        const velocity = concluding
+          ? Math.min(36, Math.max(12, gap * 0.45))
+          : Math.min(9, Math.max(0.8 + current * 0.035, gap * 0.18));
+        return Math.min(target, current + velocity / 10);
+      });
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [progress.overall, target]);
+
+  return displayed;
 }
 
 function Header({ view, onBack }: { view: View; onBack: () => void }) {
@@ -110,15 +150,13 @@ function Header({ view, onBack }: { view: View; onBack: () => void }) {
     <header className={`app-header ${showBack ? "has-back" : ""}`} data-tauri-drag-region onMouseDown={startDragging}>
       <div className="window-control-space" data-tauri-drag-region />
       <div className="header-content" data-tauri-drag-region>
-        <div className="brand-lockup" data-tauri-drag-region>
+        {showBack ? <button className="brand-lockup brand-button" onClick={onBack} aria-label="Go back">
           <Logo />
           <span className="brand-name">Stem Separator</span>
-        </div>
-        {showBack && (
-          <button className="icon-button back-button" onClick={onBack} aria-label="Go back">
-            <ArrowLeft size={19} strokeWidth={2} />
-          </button>
-        )}
+        </button> : <div className="brand-lockup" data-tauri-drag-region>
+          <Logo />
+          <span className="brand-name">Stem Separator</span>
+        </div>}
       </div>
       <div className="header-drag-space" data-tauri-drag-region />
     </header>
@@ -173,7 +211,7 @@ function SelectView({
   onAdd,
   onStart,
   catalog,
-  catalogRemote,
+  dragging,
 }: {
   files: InputFile[];
   selected: StemId[];
@@ -182,13 +220,10 @@ function SelectView({
   onAdd: () => void;
   onStart: () => void;
   catalog: Catalog | null;
-  catalogRemote: boolean;
+  dragging: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const plan = useMemo(() => (catalog ? buildModelPlan(catalog, selected) : []), [catalog, selected]);
-  const primaryStems = STEMS.filter((stem) => stem.primary);
-  const moreStems = STEMS.filter((stem) => !stem.primary);
-  const hiddenSelected = moreStems.filter((stem) => selected.includes(stem.id)).length;
 
   const toggleStem = (stem: StemId) => {
     setSelected(selected.includes(stem) ? selected.filter((item) => item !== stem) : [...selected, stem]);
@@ -196,36 +231,40 @@ function SelectView({
 
   return (
     <main className="select-view content-shell">
-      <section className="file-row">
-        <div className="file-list">
-          {files.slice(0, 2).map((file, index) => <FilePill key={`${file.path}-${index}`} file={file} onRemove={() => onRemove(index)} />)}
-          {files.length > 2 && <div className="more-files">+{files.length - 2} more files</div>}
+      <section className={`file-row ${dragging ? "is-dragging" : ""}`}>
+        {dragging && <div className="add-drop-hint"><Upload size={18} /><span>Drop files or a folder to add them</span></div>}
+        <div className="file-list" aria-label={`${files.length} selected ${files.length === 1 ? "file" : "files"}`}>
+          {files.map((file, index) => <FilePill key={`${file.path}-${index}`} file={file} onRemove={() => onRemove(index)} />)}
         </div>
         <button className="add-button" onClick={onAdd}><Plus size={16} /> Add</button>
       </section>
 
       <section className="stem-section">
-        <div className="eyebrow">What would you like?</div>
         <h1>Choose your stems</h1>
-        <div className="preset-row" aria-label="Quick configurations">
+        <p className="stem-intro">Start with a separation type, or customize the individual stems.</p>
+        <div className="preset-grid" aria-label="Separation types">
           {QUICK_CONFIGS.map((preset) => (
-            <button key={preset.label} className={exactSelection(selected, preset.stems) ? "active" : ""} onClick={() => setSelected(preset.stems)}>
-              {preset.label}
+            <button key={preset.label} className={`preset-card ${exactSelection(selected, preset.stems) ? "active" : ""}`} onClick={() => setSelected(preset.stems)}>
+              <span className="preset-icon"><StemGlyph type={preset.glyph} /></span>
+              <span className="preset-copy">
+                <strong>{preset.label}</strong>
+                <small>{preset.description}</small>
+                <em>{preset.detail}</em>
+              </span>
+              <span className="preset-check">{exactSelection(selected, preset.stems) && <Check size={15} strokeWidth={3} />}</span>
             </button>
           ))}
         </div>
 
-        <div className="stem-grid">
-          {primaryStems.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
-        </div>
-
-        <button className={`more-stems-toggle ${moreOpen ? "open" : ""}`} onClick={() => setMoreOpen((open) => !open)}>
-          <span>More stems{hiddenSelected > 0 ? ` · ${hiddenSelected} selected` : ""}</span>
+        <button className={`more-stems-toggle ${moreOpen ? "open" : ""}`} onClick={() => setMoreOpen((open) => !open)} aria-expanded={moreOpen}>
+          <span><strong>More stems</strong></span>
           <ChevronDown size={16} />
         </button>
         {moreOpen && (
-          <div className="stem-grid more-stem-grid">
-            {moreStems.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
+          <div className="manual-stems-panel">
+            <div className="stem-grid more-stem-grid">
+              {STEMS.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
+            </div>
           </div>
         )}
       </section>
@@ -233,9 +272,8 @@ function SelectView({
       <section className="selection-footer">
         {plan.length > 1 ? (
           <div className="smart-plan">
-            <Sparkles size={16} />
-            <span><strong>{plan.length} model passes planned</strong> · handled automatically</span>
-            <span className={`catalog-dot ${catalogRemote ? "remote" : ""}`} title={catalogRemote ? "Live catalog" : "Bundled catalog"} />
+            <span className="plan-bullet" />
+            <span><strong>{plan.length} model passes required</strong></span>
           </div>
         ) : <span />}
         <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
@@ -250,25 +288,25 @@ function ProcessingView({
   progress,
   files,
   plan,
-  selected,
   onStop,
 }: {
   progress: JobProgress;
   files: InputFile[];
   plan: ReturnType<typeof buildModelPlan>;
-  selected: StemId[];
   onStop: () => void;
 }) {
+  const displayedProgress = useSmoothedProgress(progress);
   const activeModel = Math.max(0, (progress.modelIndex || 1) - 1);
   const finishing = progress.overall >= 98 || progress.stage === "Finishing up" || progress.stage.startsWith("Creating ");
+  const needsAlignment = files.some((file) => file.extension !== "wav");
   return (
     <main className="processing-view content-shell">
       <section className="processing-card">
         <div className="processing-topline">
           <span>Separating {files.length === 1 ? files[0].name : `${files.length} files`}</span>
-          <strong>{Math.round(progress.overall)}%</strong>
+          <strong>{Math.round(displayedProgress)}%</strong>
         </div>
-        <div className="main-progress"><span style={{ width: `${Math.max(1, progress.overall)}%` }} /></div>
+        <div className="main-progress"><span style={{ width: `${Math.max(1, displayedProgress)}%` }} /></div>
         <div className="processing-summary">
           <div className="pulse-disc"><span /></div>
           <div>
@@ -291,21 +329,12 @@ function ProcessingView({
           })}
           <div className={`stage-row ${finishing ? "active" : ""}`}>
             <span className="stage-status">{progress.overall >= 100 ? <CircleCheck size={19} /> : <span className="empty-circle" />}</span>
-            <div className="stage-copy"><strong>Finishing up</strong><span>Aligning and writing WAV files</span></div>
+            <div className="stage-copy"><strong>Finishing up</strong><span>{needsAlignment ? "Aligning and writing WAV files" : "Writing WAV files"}</span></div>
             <span className="stage-state">{finishing ? "Processing" : "Waiting"}</span>
           </div>
         </div>
 
         <div className="processing-footer">
-          <details className="technical-details">
-            <summary><Gauge size={15} /> Technical details <ChevronDown size={15} /></summary>
-            <div className="detail-grid">
-              <span>Current file</span><strong>{progress.fileIndex + 1} of {progress.fileCount}</strong>
-              <span>Selected output</span><strong>{selected.map(stemLabel).join(", ")}</strong>
-              <span>Processing mode</span><strong>Local · WAV 44.1 kHz</strong>
-              <span>Estimated time</span><strong>{progress.etaSeconds ? `About ${Math.max(1, Math.ceil(progress.etaSeconds / 60))} min` : "Calculating…"}</strong>
-            </div>
-          </details>
           <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" /> Stop</button>
         </div>
       </section>
@@ -393,7 +422,6 @@ export default function App() {
   const [files, setFiles] = useState<InputFile[]>([]);
   const [selected, setSelected] = useState<StemId[]>(["vocals"]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [catalogRemote, setCatalogRemote] = useState(false);
   const [progress, setProgress] = useState<JobProgress>({ jobId: "", overall: 1, fileIndex: 0, fileCount: 1, stage: "Preparing your audio", detail: "Checking the source and separation plan…" });
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -406,7 +434,7 @@ export default function App() {
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected) : [], [catalog, selected]);
 
   useEffect(() => {
-    loadCatalog().then(({ catalog: nextCatalog, remote }) => { setCatalog(nextCatalog); setCatalogRemote(remote); });
+    loadCatalog().then(({ catalog: nextCatalog }) => { setCatalog(nextCatalog); });
     if (new URLSearchParams(window.location.search).has("demo")) {
       setFiles([
         { path: "demo-session.wav", name: "studio-session.wav", extension: "wav", sizeBytes: 84_900_000, durationSeconds: 237, isVideo: false },
@@ -512,13 +540,20 @@ export default function App() {
 
   const reset = () => { setFiles([]); setResult(null); setSelected(["vocals"]); setView("drop"); };
   const goBack = () => { if (view === "select") reset(); else if (view === "results") setView("select"); };
+  const removeFile = (index: number) => {
+    setFiles((current) => {
+      const remaining = current.filter((_, itemIndex) => itemIndex !== index);
+      if (remaining.length === 0) setView("drop");
+      return remaining;
+    });
+  };
 
   return (
     <div className={`app app-${view}`}>
       <Header view={view} onBack={goBack} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
-      {view === "select" && <SelectView files={files} selected={selected} setSelected={setSelected} onRemove={(index) => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} onAdd={() => pick(false)} onStart={start} catalog={catalog} catalogRemote={catalogRemote} />}
-      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} selected={selected} onStop={() => setConfirmStop(true)} />}
+      {view === "select" && <SelectView files={files} selected={selected} setSelected={setSelected} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} catalog={catalog} dragging={dragging} />}
+      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}
       {view === "results" && result && <ResultsView result={result} onReset={reset} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
       {view === "processing" && confirmStop && <ConfirmStop stopping={stopping} onCancel={() => setConfirmStop(false)} onConfirm={stop} />}

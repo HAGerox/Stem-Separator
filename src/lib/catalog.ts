@@ -21,6 +21,21 @@ export async function loadCatalog(): Promise<{ catalog: Catalog; remote: boolean
 }
 
 export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[] {
+  const completeMix = ["vocals", "drums", "bass", "guitar", "piano", "other"] satisfies StemId[];
+  const isCompleteMix = selected.length === completeMix.length && completeMix.every((stem) => selected.includes(stem));
+  if (isCompleteMix) {
+    const sixStemModel = catalog.models.find((model) => model.id === "audio-separator:htdemucs-6s")
+      || catalog.models.find((model) => completeMix.every((stem) => model.stems.includes(stem)));
+    if (sixStemModel) {
+      return [{
+        id: sixStemModel.id,
+        modelFilename: sixStemModel.filename,
+        modelName: sixStemModel.name,
+        stems: completeMix,
+      }];
+    }
+  }
+
   const uncovered = new Set(selected);
   const runs: ModelRun[] = [];
 
