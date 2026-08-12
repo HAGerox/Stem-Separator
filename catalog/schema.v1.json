@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stemseparator.app/catalog/schema.v1.json",
+  "title": "Stem Separator model catalog",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "models"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "sourceLabel": { "type": "string" },
+    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+    "futureProviders": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["name", "url", "kind"],
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "kind": { "type": "string" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["id", "filename", "name", "provider", "runtime", "architecture", "stems", "quality", "speed", "memory", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "filename": { "type": "string" },
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "runtime": { "enum": ["local", "remote"] },
+        "architecture": { "type": "string" },
+        "stems": {
+          "type": "array",
+          "items": { "enum": ["vocals", "instrumental", "drums", "bass", "guitar", "piano", "strings", "other"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "quality": { "type": "number", "minimum": 0, "maximum": 100 },
+        "speed": { "type": "number", "minimum": 0, "maximum": 100 },
+        "memory": { "enum": ["low", "medium", "high"] },
+        "note": { "type": "string" },
+        "source": { "type": "string" },
+        "scores": { "type": "object" },
+        "status": { "enum": ["verified", "experimental", "deprecated", "research-only"] }
+      }
+    }
+  }
+}

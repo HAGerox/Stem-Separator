@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-12T00:00:00Z",
+  "sourceLabel": "Bundled community ranking · local models",
+  "sources": [
+    {
+      "name": "python-audio-separator",
+      "url": "https://github.com/nomadkaraoke/python-audio-separator",
+      "kind": "runtime-registry"
+    },
+    {
+      "name": "MVSep algorithms",
+      "url": "https://mvsep.com/en/algorithms",
+      "kind": "benchmark-and-capability-reference"
+    },
+    {
+      "name": "Community separation guide",
+      "url": "https://deton24.github.io/separation-guide/",
+      "kind": "qualitative-reference"
+    }
+  ],
+  "models": [
+    {
+      "id": "audio-separator:viperx-bs-roformer-1297",
+      "filename": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+      "name": "BS-Roformer Viperx 1297",
+      "provider": "audio-separator",
+      "runtime": "local",
+      "architecture": "MDXC",
+      "stems": ["vocals", "instrumental"],
+      "quality": 97,
+      "speed": 54,
+      "memory": "high",
+      "note": "High-quality first choice for clean vocals and instrumentals.",
+      "source": "audio-separator supported model list",
+      "scores": {
+        "metric": "SDR",
+        "vocals": 12.9,
+        "instrumental": 17.0
+      },
+      "status": "verified"
+    },
+    {
+      "id": "audio-separator:htdemucs-6s",
+      "filename": "htdemucs_6s.yaml",
+      "name": "Demucs 6-stem",
+      "provider": "audio-separator",
+      "runtime": "local",
+      "architecture": "Demucs",
+      "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+      "quality": 81,
+      "speed": 73,
+      "memory": "medium",
+      "note": "Efficient broad-stem pass for rhythm and instrument parts; guitar and piano are useful but not dedicated-model quality.",
+      "source": "audio-separator supported model list",
+      "status": "verified"
+    },
+    {
+      "id": "audio-separator:htdemucs-ft",
+      "filename": "htdemucs_ft.yaml",
+      "name": "Demucs v4 fine-tuned",
+      "provider": "audio-separator",
+      "runtime": "local",
+      "architecture": "Demucs",
+      "stems": ["vocals", "drums", "bass", "other"],
+      "quality": 86,
+      "speed": 60,
+      "memory": "high",
+      "note": "Strong four-stem fallback with good drum and bass separation.",
+      "source": "audio-separator supported model list",
+      "status": "verified"
+    }
+  ],
+  "futureProviders": [
+    {
+      "id": "mvsep:strings",
+      "runtime": "remote",
+      "stems": ["strings"],
+      "status": "research-only",
+      "note": "Dedicated strings capability exists on MVSep but is not currently executable through the local audio-separator runtime."
+    }
+  ]
+}
