@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stem-separator-server"
-version = "0.2.2"
+version = "0.2.3"
 description = "Headless CUDA stem separation server and WebUI for WSL2/Linux"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
