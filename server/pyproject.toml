@@ -20,7 +20,7 @@ stem-separator-server = "stem_separator_server.cli:main"
 stem-separator-server-update = "stem_separator_server.cli:update_main"
 
 [project.optional-dependencies]
-test = ["httpx>=0.28,<1", "pytest>=8,<9"]
+test = ["httpx>=0.28,<1", "pytest>=9.0.3,<10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stem_separator_server"]
