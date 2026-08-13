@@ -143,7 +143,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for attempt in {1..20}; do
-            gh release view "$GITHUB_REF_NAME" >/dev/null && break
+            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null && break
             sleep 3
           done
-          gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
+          gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
