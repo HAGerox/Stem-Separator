@@ -2,6 +2,8 @@ name: Build WSL CUDA server
 
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
   pull_request:
     paths:
       - "server/**"
@@ -9,11 +11,12 @@ on:
       - "catalog/**"
       - "package*.json"
       - ".github/workflows/build-wsl-cuda-server.yml"
-  push:
-    branches: [main]
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: wsl-cuda-build-${{ github.ref }}
@@ -45,6 +48,24 @@ jobs:
         run: |
           cp server/scripts/install-wsl.sh artifacts/
           cp server/README.md artifacts/
+          (cd artifacts && sha256sum * > SHA256SUMS)
+
+      - name: Attest server wheel
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/*.whl
+
+      - name: Publish server release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in {1..20}; do
+            gh release view "$GITHUB_REF_NAME" >/dev/null && break
+            sleep 3
+          done
+          gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
       - uses: actions/upload-artifact@v7
         with:
           name: stem-separator-wsl-cuda-server
@@ -58,19 +79,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      - name: Build CUDA image without publishing
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build CUDA image
+        id: image
         uses: docker/build-push-action@v7
         with:
           context: ./server
           platforms: linux/amd64
-          push: false
-          load: true
-          tags: stem-separator-server:${{ github.sha }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          load: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          tags: |
+            ghcr.io/hagerox/stem-separator-server:${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'ci' }}
+            ${{ startsWith(github.ref, 'refs/tags/v') && 'ghcr.io/hagerox/stem-separator-server:latest' || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke-test image without a GPU
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: |
-          docker run -d --name stem-separator-ci -p 127.0.0.1:17860:7860 stem-separator-server:${{ github.sha }}
+          docker run -d --name stem-separator-ci -p 127.0.0.1:17860:7860 ghcr.io/hagerox/stem-separator-server:ci
           docker exec stem-separator-ci audio-separator --version
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:17860/healthz; then exit 0; fi
@@ -78,3 +110,11 @@ jobs:
           done
           docker logs stem-separator-ci
           exit 1
+
+      - name: Attest container image
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/hagerox/stem-separator-server
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true

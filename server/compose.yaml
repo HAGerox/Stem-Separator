@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: stem-separator-server:local
+    image: ${STEM_SEPARATOR_IMAGE:-ghcr.io/hagerox/stem-separator-server:latest}
     ports:
       - "127.0.0.1:7860:7860"
     volumes:

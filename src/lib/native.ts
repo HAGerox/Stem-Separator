@@ -5,6 +5,7 @@ import type {
   ModelRun,
   ProcessResult,
   StemId,
+  UpdateInfo,
 } from "../types";
 
 export const inTauri = isTauri();
@@ -42,6 +43,16 @@ export async function processJob(payload: {
 export async function cancelJob(jobId?: string): Promise<boolean> {
   if (!inTauri) return true;
   return invoke<boolean>("cancel_job", { jobId });
+}
+
+export async function checkForUpdate(): Promise<UpdateInfo> {
+  if (!inTauri) return { configured: false, available: false, currentVersion: "browser" };
+  return invoke<UpdateInfo>("check_for_update");
+}
+
+export async function installUpdate(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("install_update");
 }
 
 export async function revealPath(path: string): Promise<void> {

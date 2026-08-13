@@ -8,6 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 use tokio::{process::Command as TokioCommand, time};
 use walkdir::WalkDir;
 
@@ -105,6 +106,17 @@ struct ProcessResult {
     outputs: Vec<OutputStem>,
     warnings: Vec<String>,
     used_demo_mode: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    configured: bool,
+    available: bool,
+    current_version: String,
+    version: Option<String>,
+    notes: Option<String>,
+    date: Option<String>,
 }
 
 #[derive(Clone)]
@@ -309,6 +321,66 @@ fn detect_environment() -> EnvironmentStatus {
             "Local processing".into()
         },
     }
+}
+
+fn updater_configured(app: &AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|value| value.get("pubkey"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|key| !key.trim().is_empty() && !key.contains("TAURI_UPDATER_PUBLIC_KEY"))
+}
+
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
+    let current_version = app.package_info().version.to_string();
+    if !updater_configured(&app) {
+        return Ok(UpdateInfo {
+            configured: false,
+            available: false,
+            current_version,
+            version: None,
+            notes: None,
+            date: None,
+        });
+    }
+    let update = app
+        .updater()
+        .map_err(|error| format!("Could not initialize the updater: {error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("Could not check GitHub for updates: {error}"))?;
+    Ok(UpdateInfo {
+        configured: true,
+        available: update.is_some(),
+        current_version,
+        version: update.as_ref().map(|value| value.version.to_string()),
+        notes: update.as_ref().and_then(|value| value.body.clone()),
+        date: update.as_ref().and_then(|value| value.date.map(|date| date.to_string())),
+    })
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    if !updater_configured(&app) {
+        return Err("Automatic updates are not configured in this build.".into());
+    }
+    let Some(update) = app
+        .updater()
+        .map_err(|error| format!("Could not initialize the updater: {error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("Could not check GitHub for updates: {error}"))?
+    else {
+        return Ok(());
+    };
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| format!("Could not install the update: {error}"))?;
+    app.restart();
 }
 
 fn is_supported(path: &Path) -> bool {
@@ -627,7 +699,7 @@ fn unique_path(path: PathBuf) -> PathBuf {
 }
 
 fn find_stem_file(directory: &Path, stem: &str) -> Option<PathBuf> {
-    let search = if stem == "strings" { "other" } else { stem };
+    let search = stem.chars().filter(|value| value.is_ascii_alphanumeric()).collect::<String>();
     let mut candidates = WalkDir::new(directory)
         .max_depth(2)
         .into_iter()
@@ -645,7 +717,14 @@ fn find_stem_file(directory: &Path, stem: &str) -> Option<PathBuf> {
     candidates.into_iter().find(|path| {
         path.file_name()
             .and_then(|value| value.to_str())
-            .map(|value| value.to_ascii_lowercase().contains(search))
+            .map(|value| {
+                value
+                    .to_ascii_lowercase()
+                    .chars()
+                    .filter(|character| character.is_ascii_alphanumeric())
+                    .collect::<String>()
+                    .contains(&search)
+            })
             .unwrap_or(false)
     })
 }
@@ -903,10 +982,6 @@ async fn process_job(
                 duration_seconds: duration,
             });
 
-            if stem == "strings" {
-                warnings.push(format!("Strings for {} currently uses the broad “Other” output as an approximate local fallback. A dedicated strings model is planned for the live catalog.", source_name));
-            }
-
             if request.keep_video && is_video(source) {
                 emit_progress(
                     &app,
@@ -1040,8 +1115,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ActiveJob::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             detect_environment,
+            check_for_update,
+            install_update,
             resolve_inputs,
             process_job,
             cancel_job,

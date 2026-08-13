@@ -44,5 +44,6 @@ uv pip install --python "$INSTALL_DIR/bin/python" \
   audioread "librosa<0.11" "$SERVER_PACKAGE"
 
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server" "$BIN_DIR/stem-separator-server"
+ln -sfn "$INSTALL_DIR/bin/stem-separator-server-update" "$BIN_DIR/stem-separator-server-update"
 "$INSTALL_DIR/bin/python" -c 'import torch; print(f"Torch CUDA ready: {torch.cuda.is_available()}"); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No CUDA device detected")'
 echo "Installed. Run: stem-separator-server"

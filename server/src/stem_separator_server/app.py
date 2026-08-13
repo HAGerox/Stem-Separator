@@ -16,6 +16,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
+from .model_registry import ModelRegistry
+from .updater import latest_release, running_in_container
+
 APP_ROOT = Path(__file__).resolve().parent
 WEB_ROOT = APP_ROOT / "web"
 DATA_ROOT = Path(os.getenv("STEM_SEPARATOR_DATA_DIR", Path.home() / ".local/share/stem-separator-server"))
@@ -28,24 +32,7 @@ ALLOWED_SUFFIXES = {
     ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi",
 }
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
-MODELS = {
-    "vocals": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-    "instrumental": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-    "drums": "htdemucs_ft.yaml",
-    "bass": "htdemucs_ft.yaml",
-    "guitar": "htdemucs_6s.yaml",
-    "piano": "htdemucs_6s.yaml",
-    "other": "htdemucs_6s.yaml",
-}
-STEM_NAMES = {
-    "vocals": "vocals",
-    "instrumental": "instrumental",
-    "drums": "drums",
-    "bass": "bass",
-    "guitar": "guitar",
-    "piano": "piano",
-    "other": "other",
-}
+REGISTRY = ModelRegistry(DATA_ROOT / "registry")
 
 
 @dataclass
@@ -72,10 +59,11 @@ GPU_QUEUE = asyncio.Lock()
 async def lifespan(_: FastAPI):
     JOBS_ROOT.mkdir(parents=True, exist_ok=True)
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(REGISTRY.refresh)
     yield
 
 
-app = FastAPI(title="Stem Separator Server", version="0.1.3", lifespan=lifespan)
+app = FastAPI(title="Stem Separator Server", version=__version__, lifespan=lifespan)
 
 
 def safe_name(value: str) -> str:
@@ -140,9 +128,12 @@ async def write_upload(upload: UploadFile, target: Path) -> None:
 
 
 def matching_output(directory: Path, stem: str) -> Path | None:
+    search = re.sub(r"[^a-z0-9]", "", stem.lower())
     matches = [
         path for path in directory.rglob("*")
-        if path.is_file() and path.suffix.lower() == ".wav" and STEM_NAMES[stem] in path.name.lower()
+        if path.is_file()
+        and path.suffix.lower() == ".wav"
+        and search in re.sub(r"[^a-z0-9]", "", path.name.lower())
     ]
     return sorted(matches)[0] if matches else None
 
@@ -184,23 +175,18 @@ async def process_job(job_id: str) -> None:
                     ],
                     job,
                 )
-            unique_models: list[str] = []
-            for stem in job.stems:
-                model = MODELS[stem]
-                if model not in unique_models:
-                    unique_models.append(model)
-
-            for index, model in enumerate(unique_models):
+            plan = REGISTRY.plan(job.stems)
+            for index, model in enumerate(plan):
                 run_dir = job_dir / "work" / f"model-{index}"
                 run_dir.mkdir(parents=True, exist_ok=True)
-                covered = [stem for stem in job.stems if MODELS[stem] == model]
+                covered = list(model.stems)
                 job.stage = f"Separating {' + '.join(stem.title() for stem in covered)}"
-                job.detail = f"{model} · CUDA worker"
-                job.progress = 5 + (index / max(len(unique_models), 1)) * 80
+                job.detail = f"{model.name} · CUDA worker"
+                job.progress = 5 + (index / max(len(plan), 1)) * 80
                 command = [
                     SEPARATOR_BIN,
                     str(separation_input),
-                    "--model_filename", model,
+                    "--model_filename", model.filename,
                     "--output_format", "WAV",
                     "--sample_rate", "44100",
                     "--output_dir", str(run_dir),
@@ -214,7 +200,7 @@ async def process_job(job_id: str) -> None:
             output_root.mkdir(parents=True, exist_ok=True)
             source_base = Path(job.filename).stem
             for stem in job.stems:
-                model_index = unique_models.index(MODELS[stem])
+                model_index = next(index for index, model in enumerate(plan) if stem in model.stems)
                 source = matching_output(job_dir / "work" / f"model-{model_index}", stem)
                 if not source:
                     raise RuntimeError(f"The selected model did not return a {stem} WAV file.")
@@ -249,6 +235,22 @@ async def environment() -> dict:
     return environment_payload()
 
 
+@app.get("/api/models")
+async def models() -> dict:
+    await asyncio.to_thread(REGISTRY.refresh)
+    return REGISTRY.payload()
+
+
+@app.get("/api/update")
+async def update() -> dict:
+    try:
+        payload = await asyncio.to_thread(latest_release)
+        payload["method"] = "container" if running_in_container() else "native"
+        return payload
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Could not check GitHub releases: {error}") from error
+
+
 @app.get("/api/jobs")
 async def list_jobs() -> list[dict]:
     return [job_payload(job) for job in sorted(JOBS.values(), key=lambda value: value.created_at, reverse=True)]
@@ -263,7 +265,9 @@ async def create_job(
     if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
         raise HTTPException(status_code=400, detail="Unsupported audio or video format.")
     selected = list(dict.fromkeys(value.strip().lower() for value in stems.split(",") if value.strip()))
-    invalid = [stem for stem in selected if stem not in MODELS]
+    await asyncio.to_thread(REGISTRY.refresh)
+    supported = set(REGISTRY.stems())
+    invalid = [stem for stem in selected if stem not in supported]
     if not selected or invalid:
         raise HTTPException(status_code=400, detail=f"Invalid stem selection: {', '.join(invalid) or 'none'}")
 

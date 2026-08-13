@@ -34,7 +34,7 @@
         "architecture": { "type": "string" },
         "stems": {
           "type": "array",
-          "items": { "enum": ["vocals", "instrumental", "drums", "bass", "guitar", "piano", "strings", "other"] },
+          "items": { "enum": ["vocals", "instrumental", "drums", "bass", "guitar", "piano", "kick", "snare", "toms", "hihat", "cymbals", "other"] },
           "minItems": 1,
           "uniqueItems": true
         },

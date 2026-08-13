@@ -12,8 +12,13 @@ def load_app(tmp_path, monkeypatch):
     return importlib.reload(server_app)
 
 
+def freeze_registry(server_app, monkeypatch):
+    monkeypatch.setattr(server_app.REGISTRY, "refresh", lambda force=False: False)
+
+
 def test_health_and_environment(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
     from fastapi.testclient import TestClient
 
     with TestClient(server_app.app) as client:
@@ -25,6 +30,7 @@ def test_health_and_environment(tmp_path, monkeypatch):
 
 def test_upload_rejects_unsupported_extension(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
     from fastapi.testclient import TestClient
 
     with TestClient(server_app.app) as client:
@@ -38,6 +44,7 @@ def test_upload_rejects_unsupported_extension(tmp_path, monkeypatch):
 
 def test_job_processes_and_downloads_archive(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
     from fastapi.testclient import TestClient
 
     async def fake_command(command, job):
@@ -74,6 +81,7 @@ def test_job_processes_and_downloads_archive(tmp_path, monkeypatch):
 
 def test_video_audio_is_extracted_before_separation(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
     from fastapi.testclient import TestClient
 
     commands = []
@@ -105,3 +113,24 @@ def test_video_audio_is_extracted_before_separation(tmp_path, monkeypatch):
     assert job["status"] == "complete", job
     assert commands[0][0] == "ffmpeg"
     assert commands[1][1].endswith("source-audio.wav")
+
+
+def test_model_registry_exposes_only_compatible_stems(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    from fastapi.testclient import TestClient
+
+    with TestClient(server_app.app) as client:
+        payload = client.get("/api/models").json()
+    assert "strings" not in payload["stems"]
+    assert {"vocals", "instrumental", "kick", "cymbals"}.issubset(payload["stems"])
+
+
+def test_registry_builds_capability_aware_plan(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    plan = server_app.REGISTRY.plan(["vocals", "instrumental"])
+    assert [model.filename for model in plan] == [
+        "bs_roformer_vocals_resurrection_unwa.ckpt",
+        "mel_band_roformer_instrumental_fv7z_gabox.ckpt",
+    ]

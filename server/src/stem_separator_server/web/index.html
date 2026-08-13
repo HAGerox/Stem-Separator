@@ -15,7 +15,9 @@
         <p>Upload audio or video. Processing stays on this server and runs through the pinned PAS fork.</p>
       </section>
       <section class="card">
+        <div id="update" class="environment hidden"></div>
         <div id="environment" class="environment">Checking CUDA…</div>
+        <div id="registry" class="environment">Loading model registry…</div>
         <form id="job-form">
           <label class="drop"><input id="file" name="file" type="file" required /><span id="file-label">Choose an audio or video file</span><small>WAV · MP3 · FLAC · M4A · MP4 · MOV and more</small></label>
           <fieldset><legend>Stems</legend><div id="stems"></div></fieldset>
@@ -32,4 +34,3 @@
     <script src="/app.js"></script>
   </body>
 </html>
-

@@ -71,6 +71,8 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .window-control-space { position: absolute; z-index: 1; inset: 0 0 auto; height: 19px; }
 .header-drag-space { position: absolute; inset: 0; }
 .header-drag-space { z-index: 0; }
+.update-button { -webkit-app-region: no-drag; position: absolute; z-index: 4; top: 30px; right: 16px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); color: var(--accent); padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.update-button:disabled { opacity: .65; cursor: default; }
 .header-content { position: absolute; z-index: 2; left: 18px; right: 16px; top: 33px; height: 25px; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
 .brand-lockup { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 7px 3px 2px; margin: -3px 0; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; }
 .brand-button { cursor: pointer; -webkit-app-region: no-drag; }

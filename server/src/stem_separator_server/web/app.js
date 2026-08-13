@@ -1,8 +1,21 @@
-const stemOptions = ["vocals", "instrumental", "drums", "bass", "guitar", "piano", "other"];
 const stemRoot = document.querySelector("#stems");
-stemOptions.forEach((stem, index) => {
-  stemRoot.insertAdjacentHTML("beforeend", `<label><input type="checkbox" value="${stem}" ${index < 2 ? "checked" : ""}><span>${stem[0].toUpperCase() + stem.slice(1)}</span></label>`);
-});
+fetch("/api/models").then((response) => response.json()).then((registry) => {
+  registry.stems.forEach((stem) => {
+    const checked = stem === "vocals" || stem === "instrumental" ? "checked" : "";
+    const label = stem === "hihat" ? "Hi-hat" : stem[0].toUpperCase() + stem.slice(1);
+    stemRoot.insertAdjacentHTML("beforeend", `<label><input type="checkbox" value="${stem}" ${checked}><span>${label}</span></label>`);
+  });
+  document.querySelector("#registry").textContent = `${registry.remote ? "Live" : "Bundled"} model registry · ${registry.generatedAt}`;
+}).catch(() => stemRoot.textContent = "Could not load the model registry.");
+
+fetch("/api/update").then((response) => response.json()).then((update) => {
+  if (!update.available) return;
+  const banner = document.querySelector("#update");
+  banner.classList.remove("hidden");
+  banner.textContent = update.method === "container"
+    ? `Version ${update.version} is available. Pull the latest ghcr.io/hagerox/stem-separator-server image and recreate this container.`
+    : `Version ${update.version} is available. Run: stem-separator-server-update`;
+}).catch(() => undefined);
 
 const environment = document.querySelector("#environment");
 fetch("/api/environment").then((response) => response.json()).then((data) => {

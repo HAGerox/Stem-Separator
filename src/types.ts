@@ -5,7 +5,11 @@ export type StemId =
   | "bass"
   | "guitar"
   | "piano"
-  | "strings"
+  | "kick"
+  | "snare"
+  | "toms"
+  | "hihat"
+  | "cymbals"
   | "other";
 
 export type View = "drop" | "select" | "processing" | "results";
@@ -30,6 +34,8 @@ export interface CatalogModel {
   memory: "low" | "medium" | "high";
   note: string;
   source?: string;
+  license?: string;
+  status?: string;
 }
 
 export interface Catalog {
@@ -37,6 +43,7 @@ export interface Catalog {
   generatedAt: string;
   sourceLabel: string;
   models: CatalogModel[];
+  recommendations?: Partial<Record<StemId | "multitrack_4" | "multitrack_6", string>>;
 }
 
 export interface ModelRun {
@@ -84,4 +91,13 @@ export interface EnvironmentStatus {
   uvAvailable: boolean;
   engineLabel: string;
   acceleration: string;
+}
+
+export interface UpdateInfo {
+  configured: boolean;
+  available: boolean;
+  currentVersion: string;
+  version?: string;
+  notes?: string;
+  date?: string;
 }

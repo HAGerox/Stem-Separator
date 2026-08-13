@@ -2,6 +2,8 @@ name: Build macOS app
 
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
   pull_request:
     paths:
       - "src/**"
@@ -11,11 +13,11 @@ on:
       - "scripts/package-macos-dmg.sh"
       - "package*.json"
       - ".github/workflows/build-macos.yml"
-  push:
-    branches: [main]
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: macos-build-${{ github.ref }}
@@ -47,13 +49,38 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Validate updater signing configuration
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          test -n "$PRIVATE_KEY"
+          test -n "$PUBLIC_KEY"
+
+      - name: Configure updater public key
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          jq --arg key "$PUBLIC_KEY" '.plugins.updater.pubkey = $key' src-tauri/tauri.conf.json > src-tauri/tauri.conf.release.json
+          mv src-tauri/tauri.conf.release.json src-tauri/tauri.conf.json
+
       - name: Prepare bundled FFmpeg and PAS runtime
         run: ./scripts/prepare-macos-resources.sh
 
       - name: Build unsigned app
         env:
           APPLE_SIGNING_IDENTITY: "-"
-        run: npm run tauri:build -- --bundles app
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            npm run tauri:build -- --bundles app
+          else
+            npm run tauri:build -- --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
       - name: Verify bundled runtime
         run: |
@@ -72,6 +99,30 @@ jobs:
           APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           ditto -c -k --keepParent "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.app.zip
           ./scripts/package-macos-dmg.sh "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.dmg
+          codesign --force --sign - artifacts/Stem-Separator-macOS-arm64.dmg
+          codesign --verify --verbose=2 artifacts/Stem-Separator-macOS-arm64.dmg
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            cp src-tauri/target/release/bundle/macos/*.app.tar.gz artifacts/Stem-Separator-macOS-arm64.app.tar.gz
+            cp src-tauri/target/release/bundle/macos/*.app.tar.gz.sig artifacts/Stem-Separator-macOS-arm64.app.tar.gz.sig
+          fi
+          (cd artifacts && shasum -a 256 * > SHA256SUMS-macOS)
+
+      - name: Generate updater manifest
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          SIGNATURE="$(cat artifacts/Stem-Separator-macOS-arm64.app.tar.gz.sig)"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See the GitHub release notes for Stem Separator $VERSION." \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "https://github.com/HAGerox/Stem-Separator/releases/download/$RELEASE_TAG/Stem-Separator-macOS-arm64.app.tar.gz" \
+            --arg signature "$SIGNATURE" \
+            '{version:$version,notes:$notes,pub_date:$date,platforms:{"darwin-aarch64":{url:$url,signature:$signature}}}' \
+            > artifacts/latest.json
 
       - uses: actions/upload-artifact@v7
         with:
@@ -79,3 +130,22 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Attest macOS release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            artifacts/Stem-Separator-macOS-arm64.app.tar.gz
+            artifacts/Stem-Separator-macOS-arm64.dmg
+
+      - name: Publish macOS release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in {1..20}; do
+            gh release view "$GITHUB_REF_NAME" >/dev/null && break
+            sleep 3
+          done
+          gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber

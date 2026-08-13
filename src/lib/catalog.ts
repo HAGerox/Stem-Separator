@@ -1,57 +1,203 @@
 import fallbackCatalog from "../../catalog/models.v1.json";
-import type { Catalog, ModelRun, StemId } from "../types";
+import type { Catalog, CatalogModel, ModelRun, StemId } from "../types";
 
-const REMOTE_CATALOG_URL = import.meta.env.VITE_MODEL_CATALOG_URL as string | undefined;
+const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/HAGerox/Stem-Separator-Models/main/registry.json";
+const REMOTE_REGISTRY_URL = (import.meta.env.VITE_MODEL_REGISTRY_URL as string | undefined)
+  || (import.meta.env.VITE_MODEL_CATALOG_URL as string | undefined)
+  || DEFAULT_REGISTRY_URL;
+const CACHE_KEY = "stem-separator:model-registry:v3";
+const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+type RegistryBackend = {
+  state?: string;
+  model_filename?: string;
+};
+
+type RegistryModel = {
+  id: string;
+  name: string;
+  architecture?: string;
+  status?: string;
+  tasks?: string[];
+  availability?: { state?: string; license?: string };
+  backends?: { audio_separator?: RegistryBackend };
+};
+
+type RegistryRecommendation = {
+  model: string;
+  alternatives?: Array<{ model: string }>;
+};
+
+type Registry = {
+  schema: number;
+  generated_at: string;
+  models: RegistryModel[];
+  recommendations: Record<string, RegistryRecommendation>;
+};
+
+type CachedRegistry = {
+  etag?: string;
+  fetchedAt?: number;
+  catalog: Catalog;
+};
+
+const APP_STEMS = new Set<StemId>([
+  "vocals", "instrumental", "drums", "bass", "guitar", "piano",
+  "kick", "snare", "toms", "hihat", "cymbals", "other",
+]);
+
+function validRegistry(value: unknown): value is Registry {
+  if (!value || typeof value !== "object") return false;
+  const registry = value as Partial<Registry>;
+  return registry.schema === 3
+    && typeof registry.generated_at === "string"
+    && Array.isArray(registry.models)
+    && !!registry.recommendations
+    && typeof registry.recommendations === "object";
+}
+
+function compatibleModel(model: RegistryModel): model is RegistryModel & { backends: { audio_separator: RegistryBackend & { model_filename: string } } } {
+  const backend = model.backends?.audio_separator;
+  return model.availability?.state === "public_weights"
+    && backend?.state === "listed"
+    && typeof backend.model_filename === "string"
+    && backend.model_filename.length > 0;
+}
+
+function firstCompatibleRecommendation(
+  registry: Registry,
+  task: string,
+  modelById: Map<string, RegistryModel>,
+): RegistryModel | undefined {
+  const recommendation = registry.recommendations[task];
+  if (!recommendation) return undefined;
+  return [recommendation.model, ...(recommendation.alternatives || []).map((item) => item.model)]
+    .map((id) => modelById.get(id))
+    .find((model): model is RegistryModel => !!model && compatibleModel(model));
+}
+
+function catalogFromRegistry(registry: Registry): Catalog {
+  const modelById = new Map(registry.models.map((model) => [model.id, model]));
+  const recommendationTasks = [
+    ...APP_STEMS,
+    "multitrack_4",
+    "multitrack_6",
+  ];
+  const selectedByTask = new Map<string, RegistryModel>();
+  for (const task of recommendationTasks) {
+    const model = firstCompatibleRecommendation(registry, task, modelById);
+    if (model) selectedByTask.set(task, model);
+  }
+
+  const selectedModels = new Map<string, CatalogModel>();
+  for (const model of selectedByTask.values()) {
+    if (!compatibleModel(model)) continue;
+    const stems = (model.tasks || []).filter((task): task is StemId => APP_STEMS.has(task as StemId));
+    if (!stems.length) continue;
+    selectedModels.set(model.id, {
+      id: `audio-separator:${model.id}`,
+      filename: model.backends.audio_separator.model_filename,
+      name: model.name,
+      architecture: model.architecture || "Unknown",
+      stems,
+      quality: model.status === "current" ? 96 : model.status === "specialist" ? 94 : 86,
+      speed: 50,
+      memory: "high",
+      note: "Selected from the capability-aware HAGerox model registry recommendations.",
+      source: "HAGerox/Stem-Separator-Models",
+      license: model.availability?.license,
+      status: model.status,
+    });
+  }
+
+  const recommendations: Catalog["recommendations"] = {};
+  for (const [task, model] of selectedByTask) {
+    recommendations[task as keyof NonNullable<Catalog["recommendations"]>] = `audio-separator:${model.id}`;
+  }
+
+  return {
+    schemaVersion: 1,
+    generatedAt: registry.generated_at,
+    sourceLabel: "HAGerox/Stem-Separator-Models · audio-separator-compatible recommendations",
+    models: [...selectedModels.values()],
+    recommendations,
+  };
+}
+
+function readCache(): CachedRegistry | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(CACHE_KEY) || "null") as CachedRegistry | null;
+    return value?.catalog?.schemaVersion === 1 && Array.isArray(value.catalog.models) ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function loadCatalog(): Promise<{ catalog: Catalog; remote: boolean }> {
-  if (REMOTE_CATALOG_URL) {
-    try {
-      const response = await fetch(REMOTE_CATALOG_URL, { cache: "no-cache" });
-      if (response.ok) {
-        const catalog = (await response.json()) as Catalog;
-        if (catalog.schemaVersion === 1 && Array.isArray(catalog.models)) {
-          return { catalog, remote: true };
+  const cached = readCache();
+  try {
+    const headers = new Headers({ Accept: "application/json" });
+    if (cached?.etag) headers.set("If-None-Match", cached.etag);
+    const response = await fetch(REMOTE_REGISTRY_URL, { cache: "no-cache", headers });
+    if (response.status === 304 && cached) return { catalog: cached.catalog, remote: true };
+    if (response.ok) {
+      const payload = await response.json() as unknown;
+      const catalog = validRegistry(payload)
+        ? catalogFromRegistry(payload)
+        : (payload as Catalog);
+      if (catalog.schemaVersion === 1 && Array.isArray(catalog.models) && catalog.models.length > 0) {
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ etag: response.headers.get("ETag") || undefined, fetchedAt: Date.now(), catalog }));
+        } catch {
+          // A read-only browser storage policy should not prevent offline fallback.
         }
+        return { catalog, remote: true };
       }
-    } catch {
-      // The app is deliberately offline-first; the bundled ranking remains usable.
     }
+  } catch {
+    // Offline-first: use the last known-good registry, then the bundled snapshot.
   }
-  return { catalog: fallbackCatalog as Catalog, remote: false };
+  return cached && Date.now() - (cached.fetchedAt || 0) <= CACHE_MAX_AGE_MS
+    ? { catalog: cached.catalog, remote: true }
+    : { catalog: fallbackCatalog as Catalog, remote: false };
+}
+
+function recommendation(catalog: Catalog, task: StemId | "multitrack_4" | "multitrack_6") {
+  const id = catalog.recommendations?.[task];
+  return id ? catalog.models.find((model) => model.id === id) : undefined;
+}
+
+export function availableStems(catalog: Catalog | null): StemId[] {
+  if (!catalog) return [];
+  return [...APP_STEMS].filter((stem) => recommendation(catalog, stem)
+    || catalog.models.some((model) => model.stems.includes(stem)));
 }
 
 export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[] {
   const completeMix = ["vocals", "drums", "bass", "guitar", "piano", "other"] satisfies StemId[];
   const isCompleteMix = selected.length === completeMix.length && completeMix.every((stem) => selected.includes(stem));
   if (isCompleteMix) {
-    const sixStemModel = catalog.models.find((model) => model.id === "audio-separator:htdemucs-6s")
-      || catalog.models.find((model) => completeMix.every((stem) => model.stems.includes(stem)));
-    if (sixStemModel) {
-      return [{
-        id: sixStemModel.id,
-        modelFilename: sixStemModel.filename,
-        modelName: sixStemModel.name,
-        stems: completeMix,
-      }];
-    }
+    const model = recommendation(catalog, "multitrack_6")
+      || catalog.models.find((candidate) => completeMix.every((stem) => candidate.stems.includes(stem)));
+    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: completeMix }];
   }
 
   const uncovered = new Set(selected);
   const runs: ModelRun[] = [];
-
   while (uncovered.size > 0) {
+    const nextStem = uncovered.values().next().value as StemId;
+    const preferred = recommendation(catalog, nextStem);
     const candidates = catalog.models
       .map((model) => {
         const covers = model.stems.filter((stem) => uncovered.has(stem));
+        const recommendedBonus = model === preferred ? 10_000 : 0;
         const precisionBonus = covers.length / Math.max(model.stems.length, 1);
-        return { model, covers, score: covers.length * 100 + model.quality + precisionBonus * 10 };
+        return { model, covers, score: recommendedBonus + covers.length * 100 + model.quality + precisionBonus * 10 };
       })
       .filter((candidate) => candidate.covers.length > 0)
       .sort((a, b) => b.score - a.score);
-
     const best = candidates[0];
     if (!best) break;
-
     runs.push({
       id: best.model.id,
       modelFilename: best.model.filename,
@@ -60,25 +206,5 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[]
     });
     best.covers.forEach((stem) => uncovered.delete(stem));
   }
-
-  // Strings are currently derived from the broad "other" stem until the live
-  // ranking catalog names a compatible dedicated model.
-  if (uncovered.has("strings")) {
-    const broad = catalog.models.find((model) => model.stems.includes("other"));
-    if (broad) {
-      const existing = runs.find((run) => run.id === broad.id);
-      if (existing) existing.stems.push("strings");
-      else {
-        runs.push({
-          id: broad.id,
-          modelFilename: broad.filename,
-          modelName: broad.name,
-          stems: ["strings"],
-        });
-      }
-      uncovered.delete("strings");
-    }
-  }
-
   return runs;
 }

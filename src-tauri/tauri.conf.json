@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Stem Separator",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "identifier": "com.stemseparator.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "Music",
     "shortDescription": "Effortless, intelligent audio stem separation.",
     "longDescription": "Separate vocals, instruments, and production stems with automatic model selection.",
@@ -46,6 +47,14 @@
     },
     "macOS": {
       "minimumSystemVersion": "13.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "${TAURI_UPDATER_PUBLIC_KEY}",
+      "endpoints": [
+        "https://github.com/HAGerox/Stem-Separator/releases/latest/download/latest.json"
+      ]
     }
   }
 }

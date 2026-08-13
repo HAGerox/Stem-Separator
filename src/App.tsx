@@ -5,6 +5,7 @@ import {
   CircleAlert,
   CircleCheck,
   Clock3,
+  Download,
   FileAudio,
   FileVideo,
   Folder,
@@ -24,9 +25,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { buildModelPlan, loadCatalog } from "./lib/catalog";
-import { cancelJob, inTauri, playableUrl, processJob, resolveInputs, revealPath } from "./lib/native";
-import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, View } from "./types";
+import { availableStems, buildModelPlan, loadCatalog } from "./lib/catalog";
+import { cancelJob, checkForUpdate, inTauri, installUpdate, playableUrl, processJob, resolveInputs, revealPath } from "./lib/native";
+import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
 
 type StemOption = {
   id: StemId;
@@ -43,7 +44,11 @@ const STEMS: StemOption[] = [
   { id: "bass", label: "Bass", description: "Bass guitar and synth bass", glyph: "bass", primary: true },
   { id: "guitar", label: "Guitar", description: "Electric and acoustic guitar", glyph: "guitar", primary: false },
   { id: "piano", label: "Piano", description: "Piano and keyboard parts", glyph: "keys", primary: false },
-  { id: "strings", label: "Strings", description: "Approximate string section", glyph: "strings", primary: false },
+  { id: "kick", label: "Kick", description: "Kick drum and low-end hits", glyph: "drum", primary: false },
+  { id: "snare", label: "Snare", description: "Snare and clap transients", glyph: "drum", primary: false },
+  { id: "toms", label: "Toms", description: "Rack and floor toms", glyph: "drum", primary: false },
+  { id: "hihat", label: "Hi-hat", description: "Open and closed hi-hats", glyph: "drum", primary: false },
+  { id: "cymbals", label: "Cymbals", description: "Crashes, rides and cymbals", glyph: "drum", primary: false },
   { id: "other", label: "Other", description: "Everything not listed above", glyph: "dots", primary: false },
 ];
 
@@ -136,7 +141,7 @@ function useSmoothedProgress(progress: JobProgress) {
   return displayed;
 }
 
-function Header({ view, onBack }: { view: View; onBack: () => void }) {
+function Header({ view, onBack, update, updating, onUpdate }: { view: View; onBack: () => void; update: UpdateInfo | null; updating: boolean; onUpdate: () => void }) {
   const showBack = view === "select" || view === "results";
 
   const startDragging = async (event: React.MouseEvent<HTMLElement>) => {
@@ -159,6 +164,10 @@ function Header({ view, onBack }: { view: View; onBack: () => void }) {
         </div>}
       </div>
       <div className="header-drag-space" data-tauri-drag-region />
+      {update?.available && <button className="update-button" disabled={updating} onClick={onUpdate} title={update.notes || `Install Stem Separator ${update.version}`}>
+        {updating ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+        {updating ? "Updating…" : `Update ${update.version}`}
+      </button>}
     </header>
   );
 }
@@ -223,6 +232,8 @@ function SelectView({
   dragging: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
+  const visibleStems = STEMS.filter((stem) => supportedStems.has(stem.id));
   const plan = useMemo(() => (catalog ? buildModelPlan(catalog, selected) : []), [catalog, selected]);
 
   const toggleStem = (stem: StemId) => {
@@ -263,7 +274,7 @@ function SelectView({
         {moreOpen && (
           <div className="manual-stems-panel">
             <div className="stem-grid more-stem-grid">
-              {STEMS.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
+              {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
             </div>
           </div>
         )}
@@ -428,6 +439,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updating, setUpdating] = useState(false);
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
@@ -435,6 +448,7 @@ export default function App() {
 
   useEffect(() => {
     loadCatalog().then(({ catalog: nextCatalog }) => { setCatalog(nextCatalog); });
+    if (inTauri) checkForUpdate().then(setUpdate).catch(() => undefined);
     if (new URLSearchParams(window.location.search).has("demo")) {
       setFiles([
         { path: "demo-session.wav", name: "studio-session.wav", extension: "wav", sizeBytes: 84_900_000, durationSeconds: 237, isVideo: false },
@@ -443,6 +457,15 @@ export default function App() {
       setView("select");
     }
   }, []);
+
+  useEffect(() => {
+    if (!catalog) return;
+    const supported = new Set(availableStems(catalog));
+    setSelected((current) => {
+      const filtered = current.filter((stem) => supported.has(stem));
+      return filtered.length ? filtered : supported.has("vocals") ? ["vocals"] : [...supported].slice(0, 1);
+    });
+  }, [catalog]);
 
   useEffect(() => () => {
     if (previewTimer.current) window.clearInterval(previewTimer.current);
@@ -548,9 +571,16 @@ export default function App() {
     });
   };
 
+  const applyUpdate = async () => {
+    setUpdating(true);
+    setError(null);
+    try { await installUpdate(); }
+    catch (reason) { setError(String(reason)); setUpdating(false); }
+  };
+
   return (
     <div className={`app app-${view}`}>
-      <Header view={view} onBack={goBack} />
+      <Header view={view} onBack={goBack} update={update} updating={updating} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
       {view === "select" && <SelectView files={files} selected={selected} setSelected={setSelected} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} catalog={catalog} dragging={dragging} />}
       {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}

@@ -1,7 +1,23 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-12T00:00:00Z",
-  "sourceLabel": "Bundled community ranking · local models",
+  "generatedAt": "2026-08-13T00:00:00Z",
+  "sourceLabel": "Bundled fallback from HAGerox/Stem-Separator-Models · audio-separator compatible",
+  "recommendations": {
+    "vocals": "audio-separator:resurrection-vocals",
+    "instrumental": "audio-separator:gabox-fv7z",
+    "drums": "audio-separator:bs-roformer-sw",
+    "bass": "audio-separator:bs-roformer-sw",
+    "guitar": "audio-separator:bs-roformer-sw",
+    "piano": "audio-separator:bs-roformer-sw",
+    "kick": "audio-separator:jarredou-drumsep-5",
+    "snare": "audio-separator:jarredou-drumsep-5",
+    "toms": "audio-separator:jarredou-drumsep-5",
+    "hihat": "audio-separator:jarredou-drumsep-5",
+    "cymbals": "audio-separator:jarredou-drumsep-5",
+    "other": "audio-separator:bs-roformer-sw",
+    "multitrack_4": "audio-separator:htdemucs-ft",
+    "multitrack_6": "audio-separator:bs-roformer-sw"
+  },
   "sources": [
     {
       "name": "python-audio-separator",
@@ -21,38 +37,63 @@
   ],
   "models": [
     {
-      "id": "audio-separator:viperx-bs-roformer-1297",
-      "filename": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
-      "name": "BS-Roformer Viperx 1297",
+      "id": "audio-separator:resurrection-vocals",
+      "filename": "bs_roformer_vocals_resurrection_unwa.ckpt",
+      "name": "BS RoFormer Resurrection Vocals",
       "provider": "audio-separator",
       "runtime": "local",
       "architecture": "MDXC",
-      "stems": ["vocals", "instrumental"],
-      "quality": 97,
+      "stems": ["vocals"],
+      "quality": 96,
       "speed": 54,
       "memory": "high",
-      "note": "High-quality first choice for clean vocals and instrumentals.",
-      "source": "audio-separator supported model list",
-      "scores": {
-        "metric": "SDR",
-        "vocals": 12.9,
-        "instrumental": 17.0
-      },
+      "note": "Best audio-separator-compatible vocals choice from the registry recommendation set.",
+      "source": "HAGerox/Stem-Separator-Models",
       "status": "verified"
     },
     {
-      "id": "audio-separator:htdemucs-6s",
-      "filename": "htdemucs_6s.yaml",
-      "name": "Demucs 6-stem",
+      "id": "audio-separator:gabox-fv7z",
+      "filename": "mel_band_roformer_instrumental_fv7z_gabox.ckpt",
+      "name": "MelBand RoFormer Inst Gabox Fv7z",
       "provider": "audio-separator",
       "runtime": "local",
-      "architecture": "Demucs",
+      "architecture": "MelBand RoFormer",
+      "stems": ["instrumental"],
+      "quality": 96,
+      "speed": 50,
+      "memory": "high",
+      "note": "Best audio-separator-compatible instrumental choice from the registry recommendation set.",
+      "source": "HAGerox/Stem-Separator-Models",
+      "status": "verified"
+    },
+    {
+      "id": "audio-separator:bs-roformer-sw",
+      "filename": "BS-Roformer-SW.ckpt",
+      "name": "BS RoFormer SW 6-Stem",
+      "provider": "audio-separator",
+      "runtime": "local",
+      "architecture": "BS RoFormer",
       "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
-      "quality": 81,
-      "speed": 73,
-      "memory": "medium",
-      "note": "Efficient broad-stem pass for rhythm and instrument parts; guitar and piano are useful but not dedicated-model quality.",
-      "source": "audio-separator supported model list",
+      "quality": 94,
+      "speed": 50,
+      "memory": "high",
+      "note": "Registry recommendation for the best compatible six-stem and instrument pass.",
+      "source": "HAGerox/Stem-Separator-Models",
+      "status": "verified"
+    },
+    {
+      "id": "audio-separator:jarredou-drumsep-5",
+      "filename": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
+      "name": "Jarredou DrumSep 5",
+      "provider": "audio-separator",
+      "runtime": "local",
+      "architecture": "MDX23C",
+      "stems": ["kick", "snare", "toms", "hihat", "cymbals"],
+      "quality": 93,
+      "speed": 55,
+      "memory": "high",
+      "note": "Registry recommendation for detailed drum sub-stems.",
+      "source": "HAGerox/Stem-Separator-Models",
       "status": "verified"
     },
     {
@@ -67,17 +108,8 @@
       "speed": 60,
       "memory": "high",
       "note": "Strong four-stem fallback with good drum and bass separation.",
-      "source": "audio-separator supported model list",
+      "source": "HAGerox/Stem-Separator-Models",
       "status": "verified"
-    }
-  ],
-  "futureProviders": [
-    {
-      "id": "mvsep:strings",
-      "runtime": "remote",
-      "stems": ["strings"],
-      "status": "research-only",
-      "note": "Dedicated strings capability exists on MVSep but is not currently executable through the local audio-separator runtime."
     }
   ]
 }
