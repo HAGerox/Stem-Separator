@@ -647,7 +647,10 @@ export default function App() {
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
   const starting = useRef(false);
+  const viewRef = useRef<View>(view);
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected, multiTrack) : [], [catalog, multiTrack, selected]);
+
+  useEffect(() => { viewRef.current = view; }, [view]);
 
   useEffect(() => {
     loadCatalog().then(({ catalog: nextCatalog }) => { setCatalog(nextCatalog); });
@@ -676,10 +679,11 @@ export default function App() {
   }, []);
 
   const addPaths = useCallback(async (paths: string[]) => {
+    if (!paths.length || viewRef.current === "results") return;
     setError(null);
-    if (!paths.length) return;
     try {
       const resolved = await resolveInputs(paths);
+      if ((viewRef.current as View) === "results") return;
       setFiles((current) => [...current, ...resolved.filter((file) => !current.some((item) => item.path === file.path))]);
       setView("select");
     } catch (reason) { setError(String(reason)); }
@@ -689,12 +693,16 @@ export default function App() {
     if (!inTauri) return;
     let unlisten: (() => void) | undefined;
     getCurrentWebview().onDragDropEvent((event) => {
+      if (view === "results") {
+        setDragging(false);
+        return;
+      }
       if (event.payload.type === "over") setDragging(true);
       if (event.payload.type === "leave") setDragging(false);
       if (event.payload.type === "drop") { setDragging(false); void addPaths(event.payload.paths); }
     }).then((dispose) => { unlisten = dispose; });
     return () => unlisten?.();
-  }, [addPaths]);
+  }, [addPaths, view]);
 
   useEffect(() => {
     if (!inTauri) return;

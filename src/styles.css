@@ -74,7 +74,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .update-button { -webkit-app-region: no-drag; position: absolute; z-index: 4; top: 9px; right: 16px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--paper)); color: var(--accent); padding: 5px 9px; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; white-space: nowrap; }
 .update-button:disabled { opacity: .65; cursor: default; }
 .drop-view { flex: 1; min-height: 0; height: 100vh; display: grid; place-items: center; position: relative; transition: .2s ease; }
-.drop-view::before { content: ""; position: absolute; inset: 24px 28px 28px; border: 1.5px dashed transparent; border-radius: 28px; pointer-events: none; transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.drop-view::before { content: ""; position: absolute; inset: 54px; border: 1.5px dashed transparent; border-radius: 28px; pointer-events: none; transition: border-color .2s ease, background .2s ease, box-shadow .2s ease; }
 .drop-view.is-dragging::before { border-color: var(--accent-ring); background: color-mix(in srgb, var(--accent) 5%, var(--paper)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 4%, transparent), 0 12px 40px color-mix(in srgb, var(--accent) 8%, transparent); }
 .drop-copy { text-align: center; margin-top: -18px; position: relative; z-index: 1; }
 .drop-icon { width: 72px; height: 72px; margin: 0 auto 26px; border-radius: 24px; display: grid; place-items: center; background: var(--accent-pale); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-ring); }
@@ -93,11 +93,11 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .danger-button:hover { background: color-mix(in srgb, var(--danger) 86%, black); }
 .text-button { margin: 12px auto 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 8px 12px; border-radius: 9px; }
 .text-button:hover { color: var(--ink); background: var(--hover); }
-.format-note { position: absolute; bottom: 32px; color: var(--soft); font-size: 10px; letter-spacing: .85px; font-weight: 600; }
+.format-note { position: absolute; bottom: 72px; color: var(--soft); font-size: 10px; letter-spacing: .85px; font-weight: 600; }
 
 .content-shell { width: min(940px, calc(100% - 64px)); margin: 0 auto; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
 .select-view { padding: 50px 0 24px; display: flex; flex-direction: column; }
-.page-back-button { align-self: flex-start; min-height: 32px; margin: 0 0 8px -7px; padding: 0 8px 0 5px; display: inline-flex; align-items: center; gap: 2px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }.page-back-button:hover { color: var(--ink); background: var(--hover); }
+.page-back-button { align-self: flex-start; min-height: 32px; margin: 0 0 8px; padding: 0 9px 0 7px; display: inline-flex; align-items: center; gap: 2px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }.page-back-button:hover { color: var(--ink); background: var(--hover); }
 .file-row { min-height: 84px; max-height: clamp(84px, 32vh, 300px); flex: 0 1 auto; display: flex; align-items: stretch; gap: 18px; padding: 8px 10px; margin: 0; border: 1.5px solid transparent; border-bottom-color: var(--line); border-radius: 20px; position: relative; transition: .18s ease; overflow: hidden; }
 .file-row.is-dragging { border-color: var(--accent-ring); background: var(--accent-pale); }
 .file-row.is-dragging > :not(.add-drop-hint) { opacity: .13; }
