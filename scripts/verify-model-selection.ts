@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { buildModelPlan, catalogFromRegistry } from "../src/lib/catalog";
 
-const registry = JSON.parse(readFileSync(process.argv[2], "utf8"));
-const catalog = catalogFromRegistry(registry);
+const input = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const catalog = input.schemaVersion === 1 ? input : catalogFromRegistry(input);
 const plan = buildModelPlan(catalog, ["vocals"]);
 if (plan.length !== 1 || plan[0].modelName !== "Becruily Deux") {
   throw new Error(`Expected Becruily Deux, received ${JSON.stringify(plan)}`);

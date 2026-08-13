@@ -61,11 +61,13 @@ export async function revealPath(path: string): Promise<void> {
   await invoke("reveal_path", { path });
 }
 
-const DRAG_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAABYUlEQVR4nO2csVHEMBBFJQ29XOJqSKmBiDqIqIGUapS4GkgvYOZJXp1t+d4r4Lx682+19lhOSUTkOPLIH7u9f/+mk7B+vQ1ZW76SlEfIKunicqJ15pEXrJ+v6SwsHz9D0pRHyKknEtMiqkdSjsipJxZDololbe5BdSI5kXrLlvTUyeT8V3dr4y5X2q16aVlX91+sTpqerfWH5qBnoDxD74n0IhMEKAhQEKAgQEGAggAFAQoCFAQoCFAQoCDgJR308Hwkj7yJNkGAggAFHd2D6uQP2UwQoCBAQYBzEGCCAAUBCgKcgwATBCgIUNAV5qB64P2cCQIUBCgIcA4CTBCgIEBBgIIABQEKAhQEKAhQUFTQenfwbI83Nfbgfh10sM4EAd2ClslT1Ft/2fOQ/tloWVdzgtYL9KKe3hPuQctkkrbW67l5wC8vAKHme5voNPTWjSY0B62T7G6ROv1+kIikA/kDYGx5nyXqamEAAAAASUVORK5CYII=";
+// A transparent drag image lets macOS show its native file-drag badge instead
+// of a second, app-specific handle floating under the pointer.
+const NATIVE_DRAG_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAHnOcQAAAAABJRU5ErkJggg==";
 
 export async function dragFile(path: string): Promise<void> {
   if (!inTauri) return;
-  await startDrag({ item: [path], icon: DRAG_ICON, mode: "copy" });
+  await startDrag({ item: [path], icon: NATIVE_DRAG_IMAGE, mode: "copy" });
 }
 
 export function playableUrl(path: string): string {

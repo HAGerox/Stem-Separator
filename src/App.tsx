@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronLeft,
   ChevronDown,
   CircleAlert,
   CircleCheck,
@@ -9,7 +10,6 @@ import {
   FileVideo,
   Folder,
   FolderOpen,
-  GripVertical,
   Info,
   LoaderCircle,
   LockKeyhole,
@@ -138,9 +138,7 @@ function useSmoothedProgress(progress: JobProgress) {
   return displayed;
 }
 
-function Header({ view, onBack, update, updating, onUpdate }: { view: View; onBack: () => void; update: UpdateInfo | null; updating: boolean; onUpdate: () => void }) {
-  const showBack = view === "select" || view === "results";
-
+function Header({ update, updating, onUpdate }: { update: UpdateInfo | null; updating: boolean; onUpdate: () => void }) {
   const startDragging = async (event: React.MouseEvent<HTMLElement>) => {
     if (!inTauri || event.button !== 0) return;
     const target = event.target as HTMLElement;
@@ -149,15 +147,65 @@ function Header({ view, onBack, update, updating, onUpdate }: { view: View; onBa
   };
 
   return (
-    <header className={`app-header ${showBack ? "has-back" : ""}`} data-tauri-drag-region onMouseDown={startDragging}>
+    <header className="app-header" data-tauri-drag-region onMouseDown={startDragging}>
       <div className="window-control-space" data-tauri-drag-region />
-      {showBack && <button className="back-button" onClick={onBack} aria-label="Go back">‹</button>}
       <div className="header-drag-space" data-tauri-drag-region />
       {update?.available && <button className="update-button" disabled={updating} onClick={onUpdate} title={update.notes || `Install Stem Separator ${update.version}`}>
         {updating ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
         {updating ? "Updating…" : `Update ${update.version}`}
       </button>}
     </header>
+  );
+}
+
+function usePresentedProgress(progress: JobProgress) {
+  const [presented, setPresented] = useState(progress);
+  const latest = useRef(progress);
+  const downloadTimer = useRef<number | null>(null);
+  const presentedRef = useRef(progress);
+
+  useEffect(() => {
+    latest.current = progress;
+    presentedRef.current = presented;
+    if (progress.phase !== "download") {
+      if (downloadTimer.current !== null) window.clearTimeout(downloadTimer.current);
+      downloadTimer.current = null;
+      setPresented(progress);
+      return;
+    }
+    if (presented.phase === "download") {
+      setPresented(progress);
+      return;
+    }
+    if (downloadTimer.current === null) {
+      downloadTimer.current = window.setTimeout(() => {
+        const next = latest.current;
+        if (next.phase === "download" || presentedRef.current.phase === "download") setPresented(next);
+        downloadTimer.current = null;
+      }, 650);
+    }
+  }, [presented.phase, progress]);
+
+  useEffect(() => () => {
+    if (downloadTimer.current !== null) window.clearTimeout(downloadTimer.current);
+  }, []);
+
+  return presented;
+}
+
+function StageProgress({ progress, active, done }: { progress: number; active: boolean; done: boolean }) {
+  const radius = 9;
+  const circumference = 2 * Math.PI * radius;
+  const value = done ? 100 : active ? progress : 0;
+  return (
+    <span className="stage-status">
+      {done ? <CircleCheck className="stage-check" size={21} strokeWidth={2.2} /> : <>
+        <svg className="stage-ring" viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="stage-ring-track" cx="12" cy="12" r={radius} />
+          <circle className="stage-ring-value" cx="12" cy="12" r={radius} strokeDasharray={circumference} strokeDashoffset={circumference * (1 - value / 100)} />
+        </svg>
+      </>}
+    </span>
   );
 }
 
@@ -210,6 +258,7 @@ function SelectView({
   onRemove,
   onAdd,
   onStart,
+  onBack,
   catalog,
   dragging,
 }: {
@@ -221,6 +270,7 @@ function SelectView({
   onRemove: (index: number) => void;
   onAdd: () => void;
   onStart: () => void;
+  onBack: () => void;
   catalog: Catalog | null;
   dragging: boolean;
 }) {
@@ -249,6 +299,7 @@ function SelectView({
 
   return (
     <main className="select-view content-shell">
+      <button className="page-back-button" onClick={onBack}><ChevronLeft size={16} strokeWidth={2.2} /> Back</button>
       <section className={`file-row ${dragging ? "is-dragging" : ""}`}>
         {dragging && <div className="add-drop-hint"><Upload size={18} /><span>Drop files or a folder to add them</span></div>}
         <div className="file-list" aria-label={`${files.length} selected ${files.length === 1 ? "file" : "files"}`}>
@@ -332,43 +383,57 @@ function ProcessingView({
   onStop: () => void;
 }) {
   const displayedProgress = useSmoothedProgress(progress);
+  const presentedProgress = usePresentedProgress(progress);
+  const needsVideoPreparation = files.some((file) => file.isVideo);
   const needsAlignment = files.some((file) => file.extension !== "wav");
   const [downloads, setDownloads] = useState<number[]>([]);
 
   useEffect(() => {
-    if (progress.phase !== "download" || !progress.modelIndex) return;
-    setDownloads((current) => current.includes(progress.modelIndex!) ? current : [...current, progress.modelIndex!]);
-  }, [progress.phase, progress.modelIndex]);
+    if (presentedProgress.phase !== "download" || !presentedProgress.modelIndex) return;
+    setDownloads((current) => current.includes(presentedProgress.modelIndex!) ? current : [...current, presentedProgress.modelIndex!]);
+  }, [presentedProgress.phase, presentedProgress.modelIndex]);
 
+  const visibleDownloads = presentedProgress.phase === "download" && presentedProgress.modelIndex && !downloads.includes(presentedProgress.modelIndex)
+    ? [...downloads, presentedProgress.modelIndex]
+    : downloads;
   const stages = useMemo(() => [
-    ...downloads.map((modelIndex) => ({
+    ...visibleDownloads.map((modelIndex) => ({
       id: `download-${modelIndex}`,
-      label: `Download ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "model"}`,
-      detail: plan[modelIndex - 1]?.modelName || "Separation model",
+      label: "Downloading model",
+      detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · for ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "this separation"}`,
       phase: "download" as const,
       modelIndex,
     })),
+    ...(needsVideoPreparation ? [{
+      id: "prepare",
+      label: "Preparing video",
+      detail: "Extracting the soundtrack for separation",
+      phase: "prepare" as const,
+      modelIndex: 0,
+    }] : []),
     ...plan.map((run, index) => ({
       id: `separate-${index + 1}`,
-      label: run.stems.map(stemLabel).join(" + "),
-      detail: run.modelName,
+      label: `Separating ${run.stems.map(stemLabel).join(" + ")}`,
+      detail: `${run.modelName} · running locally`,
       phase: "separate" as const,
       modelIndex: index + 1,
     })),
     {
       id: "finish",
       label: "Finishing up",
-      detail: needsAlignment ? "Aligning and writing output files" : "Writing output files",
+      detail: needsAlignment ? "Aligning audio and writing output files" : "Writing output files",
       phase: "finish" as const,
       modelIndex: plan.length,
     },
-  ], [downloads, needsAlignment, plan]);
-  const phase = progress.phase || (progress.stage.startsWith("Preparing ") || progress.stage.startsWith("Downloading ") ? "download" : progress.overall >= 98 || progress.stage === "Finishing up" || progress.stage.startsWith("Creating ") ? "finish" : "separate");
+  ], [needsAlignment, needsVideoPreparation, plan, visibleDownloads]);
+  const phase = presentedProgress.phase || (presentedProgress.stage.startsWith("Preparing ") || presentedProgress.stage.startsWith("Downloading ") ? "download" : presentedProgress.overall >= 98 || presentedProgress.stage === "Finishing up" || presentedProgress.stage.startsWith("Creating ") ? "finish" : "separate");
   const activeId = phase === "download"
-    ? `download-${progress.modelIndex || 1}`
+    ? `download-${presentedProgress.modelIndex || 1}`
+    : phase === "prepare"
+      ? "prepare"
     : phase === "finish" || phase === "complete"
       ? "finish"
-      : `separate-${progress.modelIndex || 1}`;
+      : `separate-${presentedProgress.modelIndex || 1}`;
   const activeIndex = Math.max(0, stages.findIndex((stage) => stage.id === activeId));
   const [shownActiveId, setShownActiveId] = useState(activeId);
   useEffect(() => {
@@ -383,20 +448,38 @@ function ProcessingView({
   const shownActiveIndex = Math.max(0, stages.findIndex((stage) => stage.id === shownActiveId));
   const visibleStart = shownActiveIndex;
   const visibleStages = stages.slice(visibleStart, shownActiveIndex + 4);
+  const activeStage = stages[activeIndex];
+  const activeHeadline = phase === "download"
+    ? `Downloading ${plan[(presentedProgress.modelIndex || 1) - 1]?.modelName || "separation model"}`
+    : phase === "prepare"
+      ? "Preparing video"
+    : phase === "finish"
+      ? presentedProgress.stage || "Finishing up"
+      : activeStage?.label || presentedProgress.stage || "Preparing separation";
+  const activeDetail = phase === "download"
+    ? presentedProgress.detail || "Downloading the files needed for this separation"
+    : phase === "prepare"
+      ? presentedProgress.detail || "Extracting the soundtrack for separation"
+    : phase === "finish"
+      ? presentedProgress.detail || activeStage?.detail
+      : activeStage?.detail || presentedProgress.detail;
   return (
     <main className="processing-view content-shell">
       <section className="processing-card">
+        <div className="processing-summary">
+          <div className="activity-disc"><LoaderCircle size={25} strokeWidth={2.1} /></div>
+          <div>
+            <h1>{activeHeadline}</h1>
+            <p>{activeDetail}</p>
+          </div>
+        </div>
+
+        <div className="processing-overall">
         <div className="processing-topline">
           <span>Separating {files.length === 1 ? files[0].name : `${files.length} files`}</span>
           <strong>{Math.round(displayedProgress)}%</strong>
         </div>
         <div className="main-progress"><span style={{ width: `${Math.max(1, displayedProgress)}%` }} /></div>
-        <div className="processing-summary">
-          <div className="activity-disc"><LoaderCircle size={25} strokeWidth={2.1} /></div>
-          <div>
-            <h1>{progress.stage || "Preparing your audio"}</h1>
-            <p>{progress.detail || "Checking the source and preparing the separation plan…"}</p>
-          </div>
         </div>
 
         <div className="stage-list" style={{ "--future-count": Math.max(0, stages.length - activeIndex - 1) } as React.CSSProperties}>
@@ -404,14 +487,13 @@ function ProcessingView({
             const index = visibleStart + visibleIndex;
             const done = index < activeIndex || phase === "complete";
             const active = index === activeIndex && phase !== "complete";
-            const phaseProgress = active ? Math.min(100, Math.max(0, progress.phaseProgress ?? (stage.phase === "separate" ? progress.overall : 4))) : done ? 100 : 0;
+            const phaseProgress = active ? Math.min(100, Math.max(0, presentedProgress.phaseProgress ?? (stage.phase === "separate" ? presentedProgress.overall : 4))) : done ? 100 : 0;
             return (
               <div className={`stage-row ${done ? "done leaving" : ""} ${active ? "active" : ""} future-${Math.max(0, index - activeIndex)}`} key={stage.id}>
-                <span className="stage-status">{done ? <CircleCheck size={18} /> : <span className="stage-number">{index + 1}</span>}</span>
+                <StageProgress progress={phaseProgress} active={active} done={done} />
                 <div className="stage-copy">
                   <div className="stage-title"><strong>{stage.label}</strong><span>{done ? "Done" : active ? `${Math.round(phaseProgress)}%` : "Waiting"}</span></div>
                   <small>{stage.detail}</small>
-                  <span className="stage-progress"><i style={{ width: `${phaseProgress}%` }} /></span>
                 </div>
               </div>
             );
@@ -482,25 +564,26 @@ function StemPlayer({ output }: { output: OutputStem }) {
     audio.currentTime = seconds;
     setCurrent(seconds);
   };
-  const beginFileDrag = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const beginFileDrag = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!inTauri || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, [role=slider]")) return;
     event.preventDefault();
     void dragFile(output.path);
   };
 
   return (
-    <div className="result-row">
+    <div className={`result-row ${inTauri ? "file-draggable" : ""}`} onMouseDown={beginFileDrag} title={inTauri ? `Drag ${stemLabel(output.stem)} to another app` : undefined}>
       <audio ref={audioRef} src={playableUrl(output.path)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onTimeUpdate={(event) => setCurrent(event.currentTarget.currentTime)} />
       <button className="play-button" onClick={toggle} aria-label={`${playing ? "Pause" : "Play"} ${stemLabel(output.stem)}`}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
       <div className="result-label"><strong>{stemLabel(output.stem)}</strong><span>{output.sourceName} · {output.isVideo ? "Video" : "WAV"}</span></div>
       <Waveform seed={output.name} current={current} duration={output.durationSeconds || audioRef.current?.duration || 0} onSeek={seek} />
       <span className="player-time">{formatTime(current)} / {formatTime(output.durationSeconds)}</span>
-      <button className="drag-file" onMouseDown={beginFileDrag} draggable={false} aria-label={`Drag ${stemLabel(output.stem)} to another app`} title="Drag this file to another app"><GripVertical size={16} /><span>{output.isVideo ? "Video" : "WAV"}</span></button>
     </div>
   );
 }
 
-function ResultsView({ result, onReset }: { result: ProcessResult; onReset: () => void }) {
+function ResultsView({ result, onReset, onBack }: { result: ProcessResult; onReset: () => void; onBack: () => void }) {
   const visibleOutputs = useMemo(() => {
     const preferred = new Map<string, OutputStem>();
     for (const output of result.outputs) {
@@ -513,6 +596,7 @@ function ResultsView({ result, onReset }: { result: ProcessResult; onReset: () =
   const hasVideo = visibleOutputs.some((output) => output.isVideo);
   return (
     <main className="results-view content-shell">
+      <button className="page-back-button" onClick={onBack}><ChevronLeft size={16} strokeWidth={2.2} /> Back</button>
       <section className="result-heading">
         <div className="success-icon"><Check size={23} strokeWidth={2.5} /></div>
         <h1>Your stems are ready</h1>
@@ -642,7 +726,19 @@ export default function App() {
     cancelled.current = false;
     setView("processing");
     setError(null);
-    setProgress({ jobId: "starting", overall: 1, fileIndex: 0, fileCount: files.length, stage: "Preparing your audio", detail: "Checking the source and separation plan…", modelCount: plan.length, phase: "separate", phaseProgress: 1 });
+    const startsWithVideo = files.some((file) => file.isVideo);
+    setProgress({
+      jobId: "starting",
+      overall: 1,
+      fileIndex: 0,
+      fileCount: files.length,
+      stage: startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
+      detail: startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
+      modelIndex: startsWithVideo ? undefined : 1,
+      modelCount: plan.length,
+      phase: startsWithVideo ? "prepare" : "separate",
+      phaseProgress: 1,
+    });
 
     if (!inTauri) {
       let value = 1;
@@ -703,11 +799,11 @@ export default function App() {
 
   return (
     <div className={`app app-${view}`}>
-      <Header view={view} onBack={goBack} update={update} updating={updating} onUpdate={applyUpdate} />
+      <Header update={update} updating={updating} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
-      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} catalog={catalog} dragging={dragging} />}
+      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} />}
       {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}
-      {view === "results" && result && <ResultsView result={result} onReset={reset} />}
+      {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
       {view === "processing" && confirmStop && <ConfirmStop stopping={stopping} onCancel={() => setConfirmStop(false)} onConfirm={stop} />}
     </div>

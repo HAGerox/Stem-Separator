@@ -471,6 +471,37 @@ fn probe_duration(path: &Path) -> Option<f64> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
+fn has_audio_stream(path: &Path) -> bool {
+    if !is_video(path) {
+        return true;
+    }
+    let Some(ffprobe) = command_path("ffprobe") else {
+        return true;
+    };
+    Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
+}
+
+fn silent_video_message(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("This video");
+    format!("{name} has no audio track, so there is nothing to separate. Choose a video that contains audio.")
+}
+
 fn describe_input(path: &Path) -> InputFile {
     InputFile {
         path: path.to_string_lossy().into_owned(),
@@ -500,6 +531,9 @@ fn resolve_inputs(paths: Vec<String>) -> Result<Vec<InputFile>, String> {
     if files.is_empty() {
         return Err("No supported audio or video files were found.".into());
     }
+    if let Some(path) = files.iter().find(|path| is_video(path) && !has_audio_stream(path)) {
+        return Err(silent_video_message(path));
+    }
     Ok(files.iter().map(|path| describe_input(path)).collect())
 }
 
@@ -508,6 +542,9 @@ fn emit_progress(app: &AppHandle, progress: JobProgress) {
 }
 
 fn extract_audio(source: &Path, target: &Path) -> Result<(), String> {
+    if !has_audio_stream(source) {
+        return Err(silent_video_message(source));
+    }
     let ffmpeg = command_path("ffmpeg").ok_or_else(|| "FFmpeg is not installed.".to_string())?;
     let output = Command::new(ffmpeg)
         .arg("-y")
@@ -522,10 +559,7 @@ fn extract_audio(source: &Path, target: &Path) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "Could not extract video audio: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        Err("The video's audio could not be prepared. Check that the file plays correctly, then try again.".into())
     }
 }
 
@@ -1203,6 +1237,9 @@ async fn process_job(
     if inputs.is_empty() {
         return Err("No supported media files were found.".into());
     }
+    if let Some(path) = inputs.iter().find(|path| is_video(path) && !has_audio_stream(path)) {
+        return Err(silent_video_message(path));
+    }
 
     let job_id = format!(
         "job-{}",
@@ -1293,13 +1330,13 @@ async fn process_job(
                     overall: file_base + file_share * 0.02,
                     file_index,
                     file_count,
-                    stage: "Preparing video audio".into(),
+                    stage: "Preparing video".into(),
                     detail: format!("Extracting the soundtrack from {source_name}"),
                     model_name: None,
                     model_index: None,
                     model_count: Some(model_count),
                     eta_seconds: None,
-                    phase: "finish".into(),
+                    phase: "prepare".into(),
                     phase_progress: 4.0,
                 },
             );
@@ -1550,7 +1587,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_verified_part, is_corrupt_checkpoint_error, safe_artifact_name, sha256_file,
+        has_audio_stream, install_verified_part, is_corrupt_checkpoint_error, safe_artifact_name,
+        sha256_file, silent_video_message,
     };
     use std::{
         fs,
@@ -1597,6 +1635,44 @@ mod tests {
         assert_eq!(
             install_verified_part(&part, &target, &expected, "model.ckpt").unwrap(),
             target
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn video_without_audio_is_rejected_with_a_short_message() {
+        let root = std::env::temp_dir().join(format!(
+            "stem-separator-silent-video-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let video = root.join("silent.mp4");
+        let ffmpeg = super::command_path("ffmpeg").expect("ffmpeg is required for this test");
+        let status = std::process::Command::new(ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=32x32:d=0.1",
+                "-an",
+                "-c:v",
+                "libx264",
+            ])
+            .arg(&video)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(!has_audio_stream(&video));
+        assert_eq!(
+            silent_video_message(&video),
+            "silent.mp4 has no audio track, so there is nothing to separate. Choose a video that contains audio."
         );
         fs::remove_dir_all(root).unwrap();
     }
