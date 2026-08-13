@@ -1,6 +1,9 @@
 # Stem Separator
 
-A macOS-first React + Tauri prototype for effortless local audio stem separation. Drop files or a folder, choose the parts you want, and the app selects a compact set of compatible models automatically.
+Local stem separation in two products:
+
+- A macOS React + Tauri app for Apple Silicon.
+- A headless Linux server for WSL2 with NVIDIA CUDA, a CLI, JSON API, and WebUI.
 
 ## What works
 
@@ -44,6 +47,53 @@ npm run dev
 
 Open `http://localhost:1420/?demo=1` to walk through the complete sample flow without processing media.
 
+## Run the WSL2 CUDA server
+
+The server is designed for Ubuntu on WSL2 with an NVIDIA GPU passed through by the Windows driver. Do not install a Linux NVIDIA display driver inside WSL; verify GPU access first with:
+
+```bash
+/usr/lib/wsl/lib/nvidia-smi
+```
+
+The recommended, isolated installation is Docker. Install Docker with WSL integration and the NVIDIA Container Toolkit, then from this repository run:
+
+```bash
+docker compose -f server/compose.yaml up --build
+```
+
+Open `http://localhost:7860`. The Compose service binds only to Windows/WSL localhost, mounts persistent job and model caches, and requests all NVIDIA GPUs.
+
+For a native WSL install instead:
+
+```bash
+sudo apt update
+sudo apt install -y ffmpeg python3 python3-venv
+# Install uv using the official Astral instructions, then:
+./server/scripts/install-wsl.sh
+stem-separator-server
+```
+
+The native server defaults to `127.0.0.1:7860`; do not bind it to another interface until authentication and TLS are added. The WebUI supports uploads, a single-GPU job queue, status polling, environment diagnostics, and ZIP downloads of 44.1 kHz WAV stems. Server state defaults to `~/.local/share/stem-separator-server`; override it with `STEM_SEPARATOR_DATA_DIR` and `STEM_SEPARATOR_MODEL_DIR`.
+
+Useful endpoints:
+
+- `GET /healthz`
+- `GET /api/environment`
+- `POST /api/jobs` as multipart form data with `file` and comma-separated `stems`
+- `GET /api/jobs/{id}`
+- `GET /api/jobs/{id}/download`
+
+`STEM_SEPARATOR_TORCH_COMPILE=1` enables the fork's optional Torch compilation path. It is off by default on the server because CUDA compatibility and warm-up cost vary by model/GPU.
+
+## Build workflows
+
+Two GitHub Actions workflows are included and can also be run manually:
+
+- `Build macOS app` produces an ad-hoc-signed (not Developer ID signed or notarized) Apple Silicon `.app.zip` and `.dmg`. It bundles FFmpeg, FFprobe, `uv`, dependency license files, and a Python runtime built from the pinned HAGerox PAS commit.
+- `Build WSL CUDA server` produces the server wheel/install helpers and builds/smoke-tests the `linux/amd64` CUDA container without pushing it to a registry.
+
+These workflows upload short-lived Actions artifacts only. They do not create a GitHub Release, publish a Python/npm package, push a container image, notarize, or deploy anything.
+
 ## Model catalog
 
 The bundled catalog lives at [`catalog/models.v1.json`](catalog/models.v1.json) and its validation shape is documented by [`catalog/schema.v1.json`](catalog/schema.v1.json). The UI contains no hard-coded model routing.
@@ -73,11 +123,11 @@ Media is never uploaded by this prototype.
 
 ## Known prototype limits
 
-- A full production release should bundle or install FFmpeg and the Python runtime through a signed onboarding flow rather than relying on Homebrew.
+- CI now prepares an unsigned macOS bundle with FFmpeg and the Python runtime, but production distribution still needs Developer ID signing, notarization, dependency-license review, and update policy work.
 - Progress within one model pass is time-based because the upstream CLI does not expose a stable machine-readable percentage event stream.
 - Duration alignment is implemented; a production QA suite should additionally compare decoded sample counts and channel layouts across representative codecs and variable-frame-rate video.
 - The first catalog is a pragmatic starter, not a universal claim of quality. Separation quality varies by song, genre, arrangement, and whether the operator prioritizes fullness or low bleed.
-- App signing, notarization, automatic updates, Windows packaging, and crash-resume are not part of this first prototype.
+- App signing, notarization, automatic updates, native Windows packaging, server authentication/TLS, durable job restoration, and crash-resume are not part of this first prototype.
 
 ## Verification
 

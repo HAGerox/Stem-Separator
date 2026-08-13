@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stem Separator Server</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header><div class="logo"><i></i><i></i><i></i><i></i><i></i></div><strong>Stem Separator</strong><span>CUDA Server</span></header>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">WSL2 · NVIDIA CUDA · local processing</p>
+        <h1>Separate stems from your browser.</h1>
+        <p>Upload audio or video. Processing stays on this server and runs through the pinned PAS fork.</p>
+      </section>
+      <section class="card">
+        <div id="environment" class="environment">Checking CUDA…</div>
+        <form id="job-form">
+          <label class="drop"><input id="file" name="file" type="file" required /><span id="file-label">Choose an audio or video file</span><small>WAV · MP3 · FLAC · M4A · MP4 · MOV and more</small></label>
+          <fieldset><legend>Stems</legend><div id="stems"></div></fieldset>
+          <button type="submit">Start separation</button>
+        </form>
+      </section>
+      <section id="job" class="card job hidden">
+        <div class="job-head"><div><p id="job-stage">Waiting</p><small id="job-detail"></small></div><strong id="job-progress">0%</strong></div>
+        <div class="track"><i id="job-bar"></i></div>
+        <pre id="job-error" class="hidden"></pre>
+        <a id="download" class="download hidden">Download WAV files</a>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
+

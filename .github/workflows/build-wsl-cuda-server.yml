@@ -1,0 +1,80 @@
+name: Build WSL CUDA server
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "server/**"
+      - "src/**"
+      - "catalog/**"
+      - "package*.json"
+      - ".github/workflows/build-wsl-cuda-server.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wsl-cuda-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - name: Build server wheel
+        run: uv build --wheel --out-dir artifacts server
+      - name: Smoke-test server package
+        run: |
+          uv venv .server-test --python 3.12
+          uv pip install --python .server-test/bin/python "server[test]"
+          .server-test/bin/pytest -q server/tests
+          uv pip install --python .server-test/bin/python --force-reinstall artifacts/*.whl
+          STEM_SEPARATOR_DATA_DIR="$RUNNER_TEMP/stem-separator" .server-test/bin/python -c "from stem_separator_server.app import app, environment_payload; assert app.title == 'Stem Separator Server'; print(environment_payload())"
+      - name: Stage WSL installer
+        run: |
+          cp server/scripts/install-wsl.sh artifacts/
+          cp server/README.md artifacts/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stem-separator-wsl-cuda-server
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  cuda-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build CUDA image without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: ./server
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: stem-separator-server:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke-test image without a GPU
+        run: |
+          docker run -d --name stem-separator-ci -p 127.0.0.1:17860:7860 stem-separator-server:${{ github.sha }}
+          docker exec stem-separator-ci audio-separator --version
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:17860/healthz; then exit 0; fi
+            sleep 2
+          done
+          docker logs stem-separator-ci
+          exit 1

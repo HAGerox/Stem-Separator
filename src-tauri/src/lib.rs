@@ -17,6 +17,16 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
 const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@f0dd3f07953b2712b2a05a437716ad3cbaf8cea0";
 
+fn bundled_resource(command: &str) -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let resources = executable.parent()?.parent()?.join("Resources");
+    let candidates = [
+        resources.join("bin").join(command),
+        resources.join(command),
+    ];
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct EnvironmentStatus {
@@ -225,6 +235,9 @@ fn stop_process_tree(pid: u32) -> Result<(), String> {
 }
 
 fn command_path(command: &str) -> Option<PathBuf> {
+    if let Some(path) = bundled_resource(command) {
+        return Some(path);
+    }
     if let Ok(path) = which::which(command) {
         return Some(path);
     }
@@ -246,6 +259,13 @@ fn available(command: &str) -> bool {
 }
 
 fn separator_engine() -> Option<EngineCommand> {
+    if let Some(path) = command_path("audio-separator") {
+        return Some(EngineCommand {
+            program: path,
+            prefix_args: Vec::new(),
+            label: "Audio Separator · bundled HAGerox PR 298 + 299".into(),
+        });
+    }
     if let Some(path) = command_path("uvx") {
         return Some(EngineCommand {
             program: path,
@@ -269,13 +289,16 @@ fn separator_engine() -> Option<EngineCommand> {
 #[tauri::command]
 fn detect_environment() -> EnvironmentStatus {
     let uv = available("uvx");
+    let bundled_separator = available("audio-separator");
     EnvironmentStatus {
         is_tauri: true,
         ffmpeg_available: available("ffmpeg"),
         ffprobe_available: available("ffprobe"),
-        separator_available: uv,
+        separator_available: uv || bundled_separator,
         uv_available: uv,
-        engine_label: if uv {
+        engine_label: if bundled_separator {
+            "Audio Separator · bundled custom PR 298 + 299 build".into()
+        } else if uv {
             "Audio Separator · custom PR 298 + 299 build".into()
         } else {
             "Audio Separator · setup required".into()
@@ -716,7 +739,7 @@ async fn process_job(
     if request.plan.is_empty() || request.stems.is_empty() {
         return Err("Choose at least one stem before starting.".into());
     }
-    let engine = separator_engine().ok_or_else(|| "The separation engine is not available. Install uv, then reopen the app: brew install uv".to_string())?;
+    let engine = separator_engine().ok_or_else(|| "The bundled separation engine is missing. Install uv, then reopen the app: brew install uv".to_string())?;
     let inputs = expand_paths(&request.paths);
     if inputs.is_empty() {
         return Err("No supported media files were found.".into());

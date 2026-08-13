@@ -1,0 +1,81 @@
+name: Build macOS app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "catalog/**"
+      - "scripts/prepare-macos-resources.sh"
+      - "scripts/package-macos-dmg.sh"
+      - "package*.json"
+      - ".github/workflows/build-macos.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          version: "0.10.11"
+          enable-cache: true
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Prepare bundled FFmpeg and PAS runtime
+        run: ./scripts/prepare-macos-resources.sh
+
+      - name: Build unsigned app
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run tauri:build -- --bundles app
+
+      - name: Verify bundled runtime
+        run: |
+          APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          test -x "$APP_PATH/Contents/Resources/bin/ffmpeg"
+          test -x "$APP_PATH/Contents/Resources/bin/ffprobe"
+          test -x "$APP_PATH/Contents/Resources/bin/audio-separator"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          "$APP_PATH/Contents/Resources/bin/ffmpeg" -version
+          "$APP_PATH/Contents/Resources/bin/audio-separator" --version
+
+      - name: Stage build artifacts
+        run: |
+          mkdir -p artifacts
+          APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          ditto -c -k --keepParent "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.app.zip
+          ./scripts/package-macos-dmg.sh "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.dmg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stem-separator-macos-arm64-unsigned
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

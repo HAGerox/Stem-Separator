@@ -41,6 +41,9 @@
     "category": "Music",
     "shortDescription": "Effortless, intelligent audio stem separation.",
     "longDescription": "Separate vocals, instruments, and production stems with automatic model selection.",
+    "resources": {
+      "resources/": ""
+    },
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

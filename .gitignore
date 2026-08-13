@@ -5,4 +5,11 @@ src-tauri/target/
 *.log
 .env
 .env.local
-
+src-tauri/resources/*
+!src-tauri/resources/.gitkeep
+server/dist/
+server/.venv/
+server/.pytest_cache/
+artifacts/
+__pycache__/
+*.py[cod]
