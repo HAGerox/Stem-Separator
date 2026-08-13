@@ -43,6 +43,19 @@
         "memory": { "enum": ["low", "medium", "high"] },
         "note": { "type": "string" },
         "source": { "type": "string" },
+        "license": { "type": "string" },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "url", "sha256"],
+            "properties": {
+              "name": { "type": "string" },
+              "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+            }
+          }
+        },
         "scores": { "type": "object" },
         "status": { "enum": ["verified", "experimental", "deprecated", "research-only"] }
       }

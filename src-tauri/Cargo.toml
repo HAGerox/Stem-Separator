@@ -1,6 +1,6 @@
 [package]
 name = "stem-separator"
-version = "0.2.0"
+version = "0.2.1"
 description = "A simple, intelligent stem separation desktop app"
 authors = ["Stem Separator"]
 edition = "2021"
@@ -22,3 +22,5 @@ tokio = { version = "1", features = ["process", "time", "macros", "rt-multi-thre
 walkdir = "2"
 which = "8"
 libc = "0.2"
+reqwest = "0.13"
+sha2 = "0.10"

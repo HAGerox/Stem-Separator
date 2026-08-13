@@ -3,7 +3,7 @@
   "generatedAt": "2026-08-13T00:00:00Z",
   "sourceLabel": "Bundled fallback from HAGerox/Stem-Separator-Models · audio-separator compatible",
   "recommendations": {
-    "vocals": "audio-separator:resurrection-vocals",
+    "vocals": "audio-separator:becruily-deux",
     "instrumental": "audio-separator:gabox-fv7z",
     "drums": "audio-separator:bs-roformer-sw",
     "bass": "audio-separator:bs-roformer-sw",
@@ -37,18 +37,31 @@
   ],
   "models": [
     {
-      "id": "audio-separator:resurrection-vocals",
-      "filename": "bs_roformer_vocals_resurrection_unwa.ckpt",
-      "name": "BS RoFormer Resurrection Vocals",
+      "id": "audio-separator:becruily-deux",
+      "filename": "becruily_deux.ckpt",
+      "name": "Becruily Deux",
       "provider": "audio-separator",
       "runtime": "local",
-      "architecture": "MDXC",
-      "stems": ["vocals"],
+      "architecture": "MelBand RoFormer",
+      "stems": ["vocals", "instrumental"],
       "quality": 96,
       "speed": 54,
       "memory": "high",
-      "note": "Best audio-separator-compatible vocals choice from the registry recommendation set.",
+      "note": "Registry-recommended vocals model, provisioned directly from its verified public artifacts.",
       "source": "HAGerox/Stem-Separator-Models",
+      "license": "CC-BY-NC-4.0",
+      "artifacts": [
+        {
+          "name": "becruily_deux.ckpt",
+          "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/becruily_deux.ckpt",
+          "sha256": "10255c02295bf3e3865d4ee50ff752d7b19b124ed5fd93b147babc4333eda3aa"
+        },
+        {
+          "name": "config_deux_becruily.yaml",
+          "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/config_deux_becruily.yaml",
+          "sha256": "bb3ea9bce37ca96d63568490d5a92d7e41df3d7726788b6970c10d89eb62d902"
+        }
+      ],
       "status": "verified"
     },
     {

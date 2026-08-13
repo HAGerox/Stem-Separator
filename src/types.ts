@@ -36,6 +36,13 @@ export interface CatalogModel {
   source?: string;
   license?: string;
   status?: string;
+  artifacts?: ModelArtifact[];
+}
+
+export interface ModelArtifact {
+  name: string;
+  url: string;
+  sha256: string;
 }
 
 export interface Catalog {
@@ -51,6 +58,7 @@ export interface ModelRun {
   modelFilename: string;
   modelName: string;
   stems: StemId[];
+  artifacts?: ModelArtifact[];
 }
 
 export interface JobProgress {

@@ -35,7 +35,7 @@ npm install
 npm run tauri:dev
 ```
 
-The first real separation can take substantially longer because `uvx` prepares the Python 3.12 environment and the selected model files download. Later runs reuse the environment/model caches. The managed command pins commit `f0dd3f0` from `personal/pr298-pr299-combined`, which combines upstream PR 298's accelerated PyTorch paths with PR 299's MSST MDXC inference-default fixes. It also supplies `audioread` and pins `librosa<0.11` for compatibility.
+The first real separation can take substantially longer while the selected model files download. Later runs reuse the bundled Python environment and verified model cache. The managed runtime pins commit `dccdbe5` from `stem-separator-registry-models`, which combines upstream PR 298's accelerated PyTorch paths, PR 299's MSST MDXC inference-default fixes, and direct registry-provisioned RoFormer support. It also supplies `audioread` and pins `librosa<0.11` for compatibility.
 
 On Apple Silicon macOS, the app passes `--use_torch_compile` on every separation. PR 298 enables regional `torch.compile` for verified MPS RoFormer paths and safely warns and falls back to eager inference for model/device combinations that do not support compilation. A new model or input shape can incur a one-time compilation cost before warm runs benefit.
 
@@ -112,7 +112,7 @@ Set `VITE_MODEL_REGISTRY_URL` for a desktop registry mirror, or `STEM_SEPARATOR_
 
 Recommendations are capability-aware. The global registry winner is used when `audio-separator` can execute it; otherwise its first compatible alternative is selected:
 
-- Resurrection Vocals for vocals
+- Becruily Deux for vocals
 - Gabox Fv7z for instrumental
 - BS RoFormer SW for six-stem/instrument work
 - Jarredou DrumSep 5 for kick, snare, toms, hi-hat, and cymbals

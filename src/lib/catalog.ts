@@ -2,15 +2,22 @@ import fallbackCatalog from "../../catalog/models.v1.json";
 import type { Catalog, CatalogModel, ModelRun, StemId } from "../types";
 
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/HAGerox/Stem-Separator-Models/main/registry.json";
-const REMOTE_REGISTRY_URL = (import.meta.env.VITE_MODEL_REGISTRY_URL as string | undefined)
-  || (import.meta.env.VITE_MODEL_CATALOG_URL as string | undefined)
+const BUILD_ENV = import.meta.env || {};
+const REMOTE_REGISTRY_URL = (BUILD_ENV.VITE_MODEL_REGISTRY_URL as string | undefined)
+  || (BUILD_ENV.VITE_MODEL_CATALOG_URL as string | undefined)
   || DEFAULT_REGISTRY_URL;
-const CACHE_KEY = "stem-separator:model-registry:v3";
+const CACHE_KEY = "stem-separator:model-registry:v4";
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 type RegistryBackend = {
   state?: string;
   model_filename?: string;
+};
+
+type RegistryArtifact = {
+  name?: string;
+  url?: string;
+  sha256?: string;
 };
 
 type RegistryModel = {
@@ -19,7 +26,7 @@ type RegistryModel = {
   architecture?: string;
   status?: string;
   tasks?: string[];
-  availability?: { state?: string; license?: string };
+  availability?: { state?: string; license?: string; artifacts?: RegistryArtifact[] };
   backends?: { audio_separator?: RegistryBackend };
 };
 
@@ -56,12 +63,29 @@ function validRegistry(value: unknown): value is Registry {
     && typeof registry.recommendations === "object";
 }
 
-function compatibleModel(model: RegistryModel): model is RegistryModel & { backends: { audio_separator: RegistryBackend & { model_filename: string } } } {
+function registryArtifacts(model: RegistryModel) {
+  return (model.availability?.artifacts || []).filter((artifact): artifact is Required<RegistryArtifact> =>
+    typeof artifact.name === "string" && artifact.name.length > 0
+    && typeof artifact.url === "string" && artifact.url.startsWith("https://")
+    && typeof artifact.sha256 === "string" && /^[a-f0-9]{64}$/i.test(artifact.sha256));
+}
+
+function directModelFilename(model: RegistryModel) {
+  return registryArtifacts(model).find((artifact) => /\.(ckpt|pth|onnx|th)$/i.test(artifact.name))?.name;
+}
+
+function compatibleModel(model: RegistryModel) {
   const backend = model.backends?.audio_separator;
   return model.availability?.state === "public_weights"
-    && backend?.state === "listed"
-    && typeof backend.model_filename === "string"
-    && backend.model_filename.length > 0;
+    && ((backend?.state === "listed"
+      && typeof backend.model_filename === "string"
+      && backend.model_filename.length > 0)
+      || (!!directModelFilename(model)
+        && registryArtifacts(model).some((artifact) => /\.ya?ml$/i.test(artifact.name))));
+}
+
+function modelFilename(model: RegistryModel) {
+  return directModelFilename(model) || model.backends?.audio_separator?.model_filename;
 }
 
 function firstCompatibleRecommendation(
@@ -76,7 +100,7 @@ function firstCompatibleRecommendation(
     .find((model): model is RegistryModel => !!model && compatibleModel(model));
 }
 
-function catalogFromRegistry(registry: Registry): Catalog {
+export function catalogFromRegistry(registry: Registry): Catalog {
   const modelById = new Map(registry.models.map((model) => [model.id, model]));
   const recommendationTasks = [
     ...APP_STEMS,
@@ -92,11 +116,13 @@ function catalogFromRegistry(registry: Registry): Catalog {
   const selectedModels = new Map<string, CatalogModel>();
   for (const model of selectedByTask.values()) {
     if (!compatibleModel(model)) continue;
+    const filename = modelFilename(model);
+    if (!filename) continue;
     const stems = (model.tasks || []).filter((task): task is StemId => APP_STEMS.has(task as StemId));
     if (!stems.length) continue;
     selectedModels.set(model.id, {
       id: `audio-separator:${model.id}`,
-      filename: model.backends.audio_separator.model_filename,
+      filename,
       name: model.name,
       architecture: model.architecture || "Unknown",
       stems,
@@ -107,6 +133,7 @@ function catalogFromRegistry(registry: Registry): Catalog {
       source: "HAGerox/Stem-Separator-Models",
       license: model.availability?.license,
       status: model.status,
+      artifacts: registryArtifacts(model),
     });
   }
 
@@ -179,7 +206,7 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[]
   if (isCompleteMix) {
     const model = recommendation(catalog, "multitrack_6")
       || catalog.models.find((candidate) => completeMix.every((stem) => candidate.stems.includes(stem)));
-    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: completeMix }];
+    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: completeMix, artifacts: model.artifacts }];
   }
 
   const uncovered = new Set(selected);
@@ -203,6 +230,7 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[]
       modelFilename: best.model.filename,
       modelName: best.model.name,
       stems: best.covers,
+      artifacts: best.model.artifacts,
     });
     best.covers.forEach((stem) => uncovered.delete(stem));
   }

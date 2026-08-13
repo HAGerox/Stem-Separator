@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
@@ -16,15 +18,12 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma",
 ];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
-const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@f0dd3f07953b2712b2a05a437716ad3cbaf8cea0";
+const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3";
 
 fn bundled_resource(command: &str) -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
     let resources = executable.parent()?.parent()?.join("Resources");
-    let candidates = [
-        resources.join("bin").join(command),
-        resources.join(command),
-    ];
+    let candidates = [resources.join("bin").join(command), resources.join(command)];
     candidates.into_iter().find(|path| path.is_file())
 }
 
@@ -59,6 +58,15 @@ struct ModelRun {
     model_filename: String,
     model_name: String,
     stems: Vec<String>,
+    #[serde(default)]
+    artifacts: Vec<ModelArtifact>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ModelArtifact {
+    name: String,
+    url: String,
+    sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,7 +366,9 @@ async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
         current_version,
         version: update.as_ref().map(|value| value.version.to_string()),
         notes: update.as_ref().and_then(|value| value.body.clone()),
-        date: update.as_ref().and_then(|value| value.date.map(|date| date.to_string())),
+        date: update
+            .as_ref()
+            .and_then(|value| value.date.map(|date| date.to_string())),
     })
 }
 
@@ -510,6 +520,166 @@ fn extract_audio(source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
+fn safe_artifact_name(name: &str) -> Result<&str, String> {
+    let path = Path::new(name);
+    if path.components().count() == 1
+        && path.file_name().and_then(|value| value.to_str()) == Some(name)
+        && !name.is_empty()
+    {
+        Ok(name)
+    } else {
+        Err(format!(
+            "The registry supplied an unsafe model filename: {name}"
+        ))
+    }
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        format!(
+            "Could not read cached model artifact {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| {
+            format!(
+                "Could not verify cached model artifact {}: {error}",
+                path.display()
+            )
+        })?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn download_verified_artifact(
+    client: &reqwest::Client,
+    artifact: &ModelArtifact,
+    model_dir: &Path,
+) -> Result<PathBuf, String> {
+    let name = safe_artifact_name(&artifact.name)?;
+    if !artifact.url.starts_with("https://")
+        || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || artifact.sha256.len() != 64
+    {
+        return Err(format!(
+            "The registry supplied invalid download metadata for {name}."
+        ));
+    }
+    let target = model_dir.join(name);
+    let expected = artifact.sha256.to_ascii_lowercase();
+    if target.is_file() {
+        if sha256_file(&target)? == expected {
+            return Ok(target);
+        }
+        fs::remove_file(&target).map_err(|error| {
+            format!(
+                "Could not replace corrupt cached model artifact {}: {error}",
+                target.display()
+            )
+        })?;
+    }
+
+    let part = model_dir.join(format!(".{name}.part"));
+    if part.exists() {
+        fs::remove_file(&part).map_err(|error| {
+            format!(
+                "Could not clear interrupted model download {}: {error}",
+                part.display()
+            )
+        })?;
+    }
+    let mut response = client
+        .get(&artifact.url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| format!("Could not download {name}: {error}"))?;
+    let mut file = fs::File::create(&part).map_err(|error| {
+        format!(
+            "Could not create model download {}: {error}",
+            part.display()
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        let _ = fs::remove_file(&part);
+        format!("The download of {name} was interrupted: {error}")
+    })? {
+        file.write_all(&chunk).map_err(|error| {
+            let _ = fs::remove_file(&part);
+            format!("Could not save model artifact {name}: {error}")
+        })?;
+        hasher.update(&chunk);
+    }
+    file.sync_all().map_err(|error| {
+        let _ = fs::remove_file(&part);
+        format!("Could not finish saving model artifact {name}: {error}")
+    })?;
+    drop(file);
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected {
+        let _ = fs::remove_file(&part);
+        return Err(format!("The downloaded {name} failed its SHA-256 check. Expected {expected}, received {actual}."));
+    }
+    fs::rename(&part, &target)
+        .map_err(|error| format!("Could not finish installing model artifact {name}: {error}"))?;
+    Ok(target)
+}
+
+async fn ensure_model_artifacts(run: &ModelRun, model_dir: &Path) -> Result<(), String> {
+    if run.artifacts.is_empty() {
+        return Ok(());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1800))
+        .build()
+        .map_err(|error| format!("Could not initialize the model downloader: {error}"))?;
+    let mut config_path = None;
+    for artifact in &run.artifacts {
+        let path = download_verified_artifact(&client, artifact, model_dir).await?;
+        if matches!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("yaml" | "yml")
+        ) {
+            config_path = Some(path);
+        }
+    }
+
+    let checkpoint_stem = Path::new(&run.model_filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            format!(
+                "The registry model filename is invalid: {}",
+                run.model_filename
+            )
+        })?;
+    let expected_config = model_dir.join(format!("{checkpoint_stem}.yaml"));
+    if let Some(source) = config_path {
+        if source != expected_config {
+            let part = model_dir.join(format!(".{checkpoint_stem}.yaml.part"));
+            fs::copy(&source, &part)
+                .map_err(|error| format!("Could not prepare the model configuration: {error}"))?;
+            if expected_config.exists() {
+                fs::remove_file(&expected_config).map_err(|error| {
+                    format!("Could not replace the model configuration: {error}")
+                })?;
+            }
+            fs::rename(&part, &expected_config)
+                .map_err(|error| format!("Could not install the model configuration: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_separator(
     app: &AppHandle,
     active_job: &ActiveJob,
@@ -523,6 +693,40 @@ async fn run_separator(
     file_count: usize,
     model_index: usize,
     model_count: usize,
+) -> Result<(), String> {
+    run_separator_attempt(
+        app,
+        active_job,
+        job_id,
+        engine,
+        input,
+        output_dir,
+        model_dir,
+        run,
+        file_index,
+        file_count,
+        model_index,
+        model_count,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_separator_attempt(
+    app: &AppHandle,
+    active_job: &ActiveJob,
+    job_id: &str,
+    engine: &EngineCommand,
+    input: &Path,
+    output_dir: &Path,
+    model_dir: &Path,
+    run: &ModelRun,
+    file_index: usize,
+    file_count: usize,
+    model_index: usize,
+    model_count: usize,
+    repair_corrupt_cache: bool,
 ) -> Result<(), String> {
     let mut command = TokioCommand::new(&engine.program);
     #[cfg(unix)]
@@ -578,9 +782,8 @@ async fn run_separator(
     let file_share = 96.0 / file_count.max(1) as f64;
     let model_region = file_share * 0.92;
     let model_share = model_region / model_count.max(1) as f64;
-    let base = 1.0
-        + file_index as f64 * file_share
-        + model_index.saturating_sub(1) as f64 * model_share;
+    let base =
+        1.0 + file_index as f64 * file_share + model_index.saturating_sub(1) as f64 * model_share;
     let progress_started = std::time::Instant::now();
 
     let output = loop {
@@ -631,6 +834,50 @@ async fn run_separator(
         } else {
             stderr.trim()
         };
+        if repair_corrupt_cache && is_corrupt_checkpoint_error(detail) {
+            let checkpoint = model_dir.join(&run.model_filename);
+            if checkpoint.is_file() {
+                fs::remove_file(&checkpoint).map_err(|error| {
+                    format!(
+                        "The cached {} checkpoint is corrupt, but it could not be removed for a clean download: {error}",
+                        run.model_name
+                    )
+                })?;
+                emit_progress(
+                    app,
+                    JobProgress {
+                        job_id: job_id.into(),
+                        overall: base.min(97.0),
+                        file_index,
+                        file_count,
+                        stage: format!("Repairing {}", run.model_name),
+                        detail: "Discarding an incomplete checkpoint and downloading it again"
+                            .into(),
+                        model_name: Some(run.model_name.clone()),
+                        model_index: Some(model_index),
+                        model_count: Some(model_count),
+                        eta_seconds: None,
+                    },
+                );
+                ensure_model_artifacts(run, model_dir).await?;
+                return Box::pin(run_separator_attempt(
+                    app,
+                    active_job,
+                    job_id,
+                    engine,
+                    input,
+                    output_dir,
+                    model_dir,
+                    run,
+                    file_index,
+                    file_count,
+                    model_index,
+                    model_count,
+                    false,
+                ))
+                .await;
+            }
+        }
         Err(format!(
             "{} could not finish the {} pass. {}",
             engine.label,
@@ -638,6 +885,13 @@ async fn run_separator(
             tail(detail, 1400)
         ))
     }
+}
+
+fn is_corrupt_checkpoint_error(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("failed finding central directory")
+        || detail.contains("checkpoint file is corrupt")
+        || detail.contains("model file is corrupt or incomplete")
 }
 
 fn tail(value: &str, max_chars: usize) -> String {
@@ -699,7 +953,10 @@ fn unique_path(path: PathBuf) -> PathBuf {
 }
 
 fn find_stem_file(directory: &Path, stem: &str) -> Option<PathBuf> {
-    let search = stem.chars().filter(|value| value.is_ascii_alphanumeric()).collect::<String>();
+    let search = stem
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .collect::<String>();
     let mut candidates = WalkDir::new(directory)
         .max_depth(2)
         .into_iter()
@@ -862,6 +1119,29 @@ async fn process_job(
     let model_count = request.plan.len();
     let file_share = 96.0 / file_count.max(1) as f64;
 
+    for (index, run) in request.plan.iter().enumerate() {
+        if run.artifacts.is_empty() {
+            continue;
+        }
+        ensure_job_running(active_job.inner(), &job_id)?;
+        emit_progress(
+            &app,
+            JobProgress {
+                job_id: job_id.clone(),
+                overall: 1.0,
+                file_index: 0,
+                file_count,
+                stage: format!("Preparing {}", run.model_name),
+                detail: "Downloading and verifying registry model files".into(),
+                model_name: Some(run.model_name.clone()),
+                model_index: Some(index + 1),
+                model_count: Some(model_count),
+                eta_seconds: None,
+            },
+        );
+        ensure_model_artifacts(run, &model_dir).await?;
+    }
+
     for (file_index, source) in inputs.iter().enumerate() {
         ensure_job_running(active_job.inner(), &job_id)?;
         let file_base = 1.0 + file_index as f64 * file_share;
@@ -942,7 +1222,11 @@ async fn process_job(
                 file_index,
                 file_count,
                 stage: "Finishing up".into(),
-                detail: if source.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("wav")) {
+                detail: if source
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("wav"))
+                {
                     format!("Writing WAV files for {source_name}")
                 } else {
                     format!("Aligning and writing outputs for {source_name}")
@@ -1127,4 +1411,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Stem Separator");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_corrupt_checkpoint_error, safe_artifact_name};
+
+    #[test]
+    fn registry_artifact_names_cannot_escape_the_model_directory() {
+        assert_eq!(
+            safe_artifact_name("becruily_deux.ckpt"),
+            Ok("becruily_deux.ckpt")
+        );
+        assert!(safe_artifact_name("../model.ckpt").is_err());
+        assert!(safe_artifact_name("models/model.ckpt").is_err());
+    }
+
+    #[test]
+    fn pytorch_zip_corruption_is_recognized_for_one_clean_retry() {
+        assert!(is_corrupt_checkpoint_error(
+            "PytorchStreamReader failed reading zip archive: failed finding central directory"
+        ));
+        assert!(!is_corrupt_checkpoint_error(
+            "The input audio file is not supported"
+        ));
+    }
 }
