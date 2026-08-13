@@ -37,7 +37,7 @@ jobs:
       - name: Smoke-test server package
         run: |
           uv venv .server-test --python 3.12
-          uv pip install --python .server-test/bin/python "server[test]"
+          uv pip install --python .server-test/bin/python "./server[test]"
           .server-test/bin/pytest -q server/tests
           uv pip install --python .server-test/bin/python --force-reinstall artifacts/*.whl
           STEM_SEPARATOR_DATA_DIR="$RUNNER_TEMP/stem-separator" .server-test/bin/python -c "from stem_separator_server.app import app, environment_payload; assert app.title == 'Stem Separator Server'; print(environment_payload())"
