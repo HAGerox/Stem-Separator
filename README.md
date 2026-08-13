@@ -98,7 +98,7 @@ Before the first tagged release, generate one Tauri updater keypair and keep it 
 npm run tauri signer generate -- -w stem-separator-updater.key
 ```
 
-Store the private key content as the GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`, its optional password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and the public key content as the repository variable `TAURI_UPDATER_PUBLIC_KEY`. Losing or rotating this key without a migration release prevents installed clients from trusting future updates.
+Store the private key content as the GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` and its optional password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The non-secret public key is committed in `src-tauri/tauri.conf.json`. Losing or rotating the private key without a migration release prevents installed clients from trusting future updates.
 
 Ad-hoc macOS signing can stay as-is and updates will work. It is independent of the updater signature. For normal end-user distribution, Developer ID signing and notarization are still strongly recommended because ad-hoc apps continue to trigger Gatekeeper approval and offer no Apple identity assurance.
 

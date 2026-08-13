@@ -5,6 +5,7 @@ src-tauri/target/
 *.log
 .env
 .env.local
+.release-secrets/
 src-tauri/resources/*
 !src-tauri/resources/.gitkeep
 server/dist/
