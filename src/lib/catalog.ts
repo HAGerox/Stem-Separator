@@ -200,39 +200,38 @@ export function availableStems(catalog: Catalog | null): StemId[] {
     || catalog.models.some((model) => model.stems.includes(stem)));
 }
 
-export function buildModelPlan(catalog: Catalog, selected: StemId[]): ModelRun[] {
+export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack = false): ModelRun[] {
   const completeMix = ["vocals", "drums", "bass", "guitar", "piano", "other"] satisfies StemId[];
-  const isCompleteMix = selected.length === completeMix.length && completeMix.every((stem) => selected.includes(stem));
+  const isCompleteMix = multiTrack && selected.length === completeMix.length && completeMix.every((stem) => selected.includes(stem));
   if (isCompleteMix) {
     const model = recommendation(catalog, "multitrack_6")
       || catalog.models.find((candidate) => completeMix.every((stem) => candidate.stems.includes(stem)));
     if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: completeMix, artifacts: model.artifacts }];
   }
 
-  const uncovered = new Set(selected);
-  const runs: ModelRun[] = [];
-  while (uncovered.size > 0) {
-    const nextStem = uncovered.values().next().value as StemId;
-    const preferred = recommendation(catalog, nextStem);
-    const candidates = catalog.models
-      .map((model) => {
-        const covers = model.stems.filter((stem) => uncovered.has(stem));
-        const recommendedBonus = model === preferred ? 10_000 : 0;
-        const precisionBonus = covers.length / Math.max(model.stems.length, 1);
-        return { model, covers, score: recommendedBonus + covers.length * 100 + model.quality + precisionBonus * 10 };
-      })
-      .filter((candidate) => candidate.covers.length > 0)
-      .sort((a, b) => b.score - a.score);
-    const best = candidates[0];
-    if (!best) break;
-    runs.push({
-      id: best.model.id,
-      modelFilename: best.model.filename,
-      modelName: best.model.name,
-      stems: best.covers,
-      artifacts: best.model.artifacts,
-    });
-    best.covers.forEach((stem) => uncovered.delete(stem));
+  // Custom selections are independent extraction targets. Resolve the best
+  // recommendation for every stem, then coalesce stems only when the registry
+  // deliberately recommends the same model for them. A broad multi-stem model
+  // must never win simply because it covers more checked boxes.
+  const runsByModel = new Map<string, ModelRun>();
+  for (const stem of selected) {
+    const model = recommendation(catalog, stem)
+      || catalog.models
+        .filter((candidate) => candidate.stems.includes(stem))
+        .sort((a, b) => b.quality - a.quality || b.speed - a.speed)[0];
+    if (!model) continue;
+    const existing = runsByModel.get(model.id);
+    if (existing) {
+      existing.stems.push(stem);
+    } else {
+      runsByModel.set(model.id, {
+        id: model.id,
+        modelFilename: model.filename,
+        modelName: model.name,
+        stems: [stem],
+        artifacts: model.artifacts,
+      });
+    }
   }
-  return runs;
+  return [...runsByModel.values()];
 }

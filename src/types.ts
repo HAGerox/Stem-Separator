@@ -61,6 +61,8 @@ export interface ModelRun {
   artifacts?: ModelArtifact[];
 }
 
+export type JobPhase = "download" | "separate" | "finish" | "complete";
+
 export interface JobProgress {
   jobId: string;
   overall: number;
@@ -72,6 +74,8 @@ export interface JobProgress {
   modelIndex?: number;
   modelCount?: number;
   etaSeconds?: number;
+  phase?: JobPhase;
+  phaseProgress?: number;
 }
 
 export interface OutputStem {

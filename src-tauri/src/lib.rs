@@ -97,6 +97,8 @@ struct JobProgress {
     model_index: Option<usize>,
     model_count: Option<usize>,
     eta_seconds: Option<u64>,
+    phase: String,
+    phase_progress: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -613,9 +615,16 @@ fn install_verified_part(
 }
 
 async fn download_verified_artifact(
+    app: &AppHandle,
+    job_id: &str,
     client: &reqwest::Client,
     artifact: &ModelArtifact,
     model_dir: &Path,
+    model_name: &str,
+    model_index: usize,
+    model_count: usize,
+    artifact_index: usize,
+    artifact_count: usize,
 ) -> Result<PathBuf, String> {
     let name = safe_artifact_name(&artifact.name)?;
     if !artifact.url.starts_with("https://")
@@ -650,6 +659,8 @@ async fn download_verified_artifact(
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|error| format!("Could not download {name}: {error}"))?;
+    let total_bytes = response.content_length();
+    let mut downloaded_bytes = 0_u64;
     let mut file = fs::File::create(&part).map_err(|error| {
         format!(
             "Could not create model download {}: {error}",
@@ -666,6 +677,28 @@ async fn download_verified_artifact(
             format!("Could not save model artifact {name}: {error}")
         })?;
         hasher.update(&chunk);
+        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+        let artifact_progress = total_bytes
+            .filter(|total| *total > 0)
+            .map(|total| downloaded_bytes as f64 / total as f64)
+            .unwrap_or(0.12);
+        let phase_progress = 100.0
+            * (artifact_index as f64 + artifact_progress.min(0.99))
+            / artifact_count.max(1) as f64;
+        emit_progress(app, JobProgress {
+            job_id: job_id.into(),
+            overall: 1.0,
+            file_index: 0,
+            file_count: 1,
+            stage: format!("Downloading {model_name}"),
+            detail: format!("{} · {} of {}", name, artifact_index + 1, artifact_count),
+            model_name: Some(model_name.into()),
+            model_index: Some(model_index),
+            model_count: Some(model_count),
+            eta_seconds: None,
+            phase: "download".into(),
+            phase_progress,
+        });
     }
     file.sync_all().map_err(|error| {
         let _ = fs::remove_file(&part);
@@ -680,7 +713,14 @@ async fn download_verified_artifact(
     install_verified_part(&part, &target, &expected, name)
 }
 
-async fn ensure_model_artifacts(run: &ModelRun, model_dir: &Path) -> Result<(), String> {
+async fn ensure_model_artifacts(
+    app: &AppHandle,
+    job_id: &str,
+    run: &ModelRun,
+    model_dir: &Path,
+    model_index: usize,
+    model_count: usize,
+) -> Result<(), String> {
     if run.artifacts.is_empty() {
         return Ok(());
     }
@@ -689,8 +729,12 @@ async fn ensure_model_artifacts(run: &ModelRun, model_dir: &Path) -> Result<(), 
         .build()
         .map_err(|error| format!("Could not initialize the model downloader: {error}"))?;
     let mut config_path = None;
-    for artifact in &run.artifacts {
-        let path = download_verified_artifact(&client, artifact, model_dir).await?;
+    let artifact_count = run.artifacts.len();
+    for (artifact_index, artifact) in run.artifacts.iter().enumerate() {
+        let path = download_verified_artifact(
+            app, job_id, &client, artifact, model_dir, &run.model_name,
+            model_index, model_count, artifact_index, artifact_count,
+        ).await?;
         if matches!(
             path.extension().and_then(|value| value.to_str()),
             Some("yaml" | "yml")
@@ -724,6 +768,16 @@ async fn ensure_model_artifacts(run: &ModelRun, model_dir: &Path) -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn model_artifacts_ready(run: &ModelRun, model_dir: &Path) -> bool {
+    !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
+        let Ok(name) = safe_artifact_name(&artifact.name) else { return false; };
+        let path = model_dir.join(name);
+        path.is_file()
+            && sha256_file(&path)
+                .is_ok_and(|actual| actual.eq_ignore_ascii_case(&artifact.sha256))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -844,6 +898,7 @@ async fn run_separator_attempt(
                     file_index, file_count, stage: format!("Separating {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
                     detail: format!("{} · running locally", run.model_name), model_name: Some(run.model_name.clone()),
                     model_index: Some(model_index), model_count: Some(model_count), eta_seconds: None,
+                    phase: "separate".into(), phase_progress: local_progress,
                 });
             }
         }
@@ -870,6 +925,8 @@ async fn run_separator_attempt(
                 model_index: Some(model_index),
                 model_count: Some(model_count),
                 eta_seconds: None,
+                phase: "separate".into(),
+                phase_progress: 100.0,
             },
         );
         Ok(())
@@ -904,9 +961,28 @@ async fn run_separator_attempt(
                         model_index: Some(model_index),
                         model_count: Some(model_count),
                         eta_seconds: None,
+                        phase: "download".into(),
+                        phase_progress: 0.0,
                     },
                 );
-                ensure_model_artifacts(run, model_dir).await?;
+                emit_progress(
+                    app,
+                    JobProgress {
+                        job_id: job_id.into(),
+                        overall: base.min(97.0),
+                        file_index,
+                        file_count,
+                        stage: format!("Downloading {}", run.model_name),
+                        detail: "Fetching a clean copy of the model".into(),
+                        model_name: Some(run.model_name.clone()),
+                        model_index: Some(model_index),
+                        model_count: Some(model_count),
+                        eta_seconds: None,
+                        phase: "download".into(),
+                        phase_progress: 0.0,
+                    },
+                );
+                ensure_model_artifacts(app, job_id, run, model_dir, model_index, model_count).await?;
                 return Box::pin(run_separator_attempt(
                     app,
                     active_job,
@@ -1167,7 +1243,7 @@ async fn process_job(
     let file_share = 96.0 / file_count.max(1) as f64;
 
     for (index, run) in request.plan.iter().enumerate() {
-        if run.artifacts.is_empty() {
+        if run.artifacts.is_empty() || model_artifacts_ready(run, &model_dir) {
             continue;
         }
         ensure_job_running(active_job.inner(), &job_id)?;
@@ -1184,9 +1260,11 @@ async fn process_job(
                 model_index: Some(index + 1),
                 model_count: Some(model_count),
                 eta_seconds: None,
+                phase: "download".into(),
+                phase_progress: 0.0,
             },
         );
-        ensure_model_artifacts(run, &model_dir).await?;
+        ensure_model_artifacts(&app, &job_id, run, &model_dir, index + 1, model_count).await?;
     }
 
     for (file_index, source) in inputs.iter().enumerate() {
@@ -1221,6 +1299,8 @@ async fn process_job(
                     model_index: None,
                     model_count: Some(model_count),
                     eta_seconds: None,
+                    phase: "finish".into(),
+                    phase_progress: 4.0,
                 },
             );
             let extracted = file_work.join("source-audio.wav");
@@ -1282,6 +1362,8 @@ async fn process_job(
                 model_index: Some(model_count),
                 model_count: Some(model_count),
                 eta_seconds: None,
+                phase: "finish".into(),
+                phase_progress: 18.0,
             },
         );
 
@@ -1331,6 +1413,8 @@ async fn process_job(
                         model_index: Some(model_count),
                         model_count: Some(model_count),
                         eta_seconds: None,
+                        phase: "finish".into(),
+                        phase_progress: 20.0 + 75.0 * stem_index as f64 / request.stems.len().max(1) as f64,
                     },
                 );
                 let video_path =
@@ -1376,6 +1460,8 @@ async fn process_job(
             model_index: Some(model_count),
             model_count: Some(model_count),
             eta_seconds: Some(0),
+            phase: "complete".into(),
+            phase_progress: 100.0,
         },
     );
     Ok(ProcessResult {
@@ -1445,6 +1531,7 @@ fn reveal_path(path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(ActiveJob::default())
+        .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![

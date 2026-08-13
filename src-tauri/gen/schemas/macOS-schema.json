@@ -2259,6 +2259,24 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-start-drag`",
+          "type": "string",
+          "const": "drag:default",
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-start-drag`"
+        },
+        {
+          "description": "Enables the start_drag command without any pre-configured scope.",
+          "type": "string",
+          "const": "drag:allow-start-drag",
+          "markdownDescription": "Enables the start_drag command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_drag command without any pre-configured scope.",
+          "type": "string",
+          "const": "drag:deny-start-drag",
+          "markdownDescription": "Denies the start_drag command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`",
           "type": "string",
           "const": "updater:default",
