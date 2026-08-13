@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     STEM_SEPARATOR_MODEL_DIR=/models
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg git python3.12 python3-pip python3-venv ca-certificates \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates ffmpeg git python3.12 python3.12-dev python3-pip python3-venv \
     && useradd --create-home --uid 10001 stem-separator \
     && mkdir -p /data /models \
     && chown stem-separator:stem-separator /data /models \

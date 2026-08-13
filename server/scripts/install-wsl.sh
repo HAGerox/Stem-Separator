@@ -11,9 +11,9 @@ if [[ ! -r /proc/sys/kernel/osrelease ]] || ! grep -qi microsoft /proc/sys/kerne
   echo "Warning: this installer is intended for Ubuntu on WSL2." >&2
 fi
 
-for command in python3 ffmpeg ffprobe; do
+for command in python3 ffmpeg ffprobe cc; do
   if ! command -v "$command" >/dev/null 2>&1; then
-    echo "Missing $command. On Ubuntu run: sudo apt update && sudo apt install -y python3 python3-venv ffmpeg" >&2
+    echo "Missing $command. On Ubuntu run: sudo apt update && sudo apt install -y build-essential python3 python3-dev python3-venv ffmpeg" >&2
     exit 1
   fi
 done
