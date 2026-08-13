@@ -39,6 +39,13 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "category": "Music",
     "shortDescription": "Effortless, intelligent audio stem separation.",
     "longDescription": "Separate vocals, instruments, and production stems with automatic model selection.",
@@ -53,7 +60,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NThGQzc2Qzg0NDE2ODUKUldTRkZrVElkdnhZUmlwMVAyZUVQS1hPTVZYZkZpdEJKaC9pODNaQ1NjMHY5eU1USTdYR0pMTncK",
       "endpoints": [
-        "https://github.com/HAGerox/Stem-Separator/releases/download/updater/latest.json"
+        "https://github.com/HAGerox/Stem-Separator/releases/latest/download/latest.json"
       ]
     }
   }

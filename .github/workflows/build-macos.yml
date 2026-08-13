@@ -84,8 +84,7 @@ jobs:
           mkdir -p artifacts
           APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           ./scripts/package-macos-dmg.sh "$APP_PATH" artifacts/Stem-Separator-macOS.dmg
-          codesign --force --sign - artifacts/Stem-Separator-macOS.dmg
-          codesign --verify --verbose=2 artifacts/Stem-Separator-macOS.dmg
+          hdiutil verify artifacts/Stem-Separator-macOS.dmg
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             cp src-tauri/target/release/bundle/macos/*.app.tar.gz artifacts/Stem-Separator-macOS-update.tar.gz
             cp src-tauri/target/release/bundle/macos/*.app.tar.gz.sig artifacts/Stem-Separator-macOS-update.tar.gz.sig
@@ -95,7 +94,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-          RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           SIGNATURE="$(cat artifacts/Stem-Separator-macOS-update.tar.gz.sig)"
@@ -103,7 +101,7 @@ jobs:
             --arg version "$VERSION" \
             --arg notes "See the GitHub release notes for Stem Separator $VERSION." \
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg url "https://github.com/HAGerox/Stem-Separator/releases/download/updater/Stem-Separator-macOS-update.tar.gz" \
+            --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/Stem-Separator-macOS-update.tar.gz" \
             --arg signature "$SIGNATURE" \
             '{version:$version,notes:$notes,pub_date:$date,platforms:{"darwin-aarch64":{url:$url,signature:$signature}}}' \
             > artifacts/latest.json
@@ -145,8 +143,9 @@ jobs:
             gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null && break
             sleep 3
           done
-          gh release upload "$GITHUB_REF_NAME" artifacts/Stem-Separator-macOS.dmg --repo "$GITHUB_REPOSITORY" --clobber
-          if ! gh release view updater --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create updater --repo "$GITHUB_REPOSITORY" --prerelease --title "Automatic update channel" --notes "Machine-readable assets used by the in-app updater."
-          fi
-          gh release upload updater artifacts/Stem-Separator-macOS-update.tar.gz artifacts/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$GITHUB_REF_NAME" \
+            artifacts/Stem-Separator-macOS.dmg \
+            artifacts/Stem-Separator-macOS-update.tar.gz \
+            artifacts/latest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

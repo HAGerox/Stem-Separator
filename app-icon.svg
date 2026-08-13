@@ -1,9 +1,8 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="228" fill="#F3F1EC"/>
-  <rect x="152" y="152" width="720" height="720" rx="184" fill="#8068EE"/>
-  <rect x="282" y="442" width="48" height="140" rx="24" fill="white" fill-opacity="0.72"/>
-  <rect x="385" y="342" width="48" height="340" rx="24" fill="white"/>
-  <rect x="488" y="252" width="48" height="520" rx="24" fill="white"/>
-  <rect x="591" y="342" width="48" height="340" rx="24" fill="white"/>
-  <rect x="694" y="442" width="48" height="140" rx="24" fill="white" fill-opacity="0.72"/>
+  <rect x="80" y="80" width="864" height="864" rx="194" fill="#F3F1EC"/>
+  <rect x="266" y="422" width="58" height="180" rx="29" fill="#276DA5" fill-opacity="0.64"/>
+  <rect x="376" y="322" width="58" height="380" rx="29" fill="#276DA5"/>
+  <rect x="486" y="232" width="58" height="560" rx="29" fill="#276DA5"/>
+  <rect x="596" y="322" width="58" height="380" rx="29" fill="#276DA5"/>
+  <rect x="706" y="422" width="58" height="180" rx="29" fill="#276DA5" fill-opacity="0.64"/>
 </svg>

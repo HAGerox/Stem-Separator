@@ -89,7 +89,7 @@ Useful endpoints:
 
 Tagged releases (`v*`) create a GitHub Release and publish update assets:
 
-- `Build macOS app` publishes one ad-hoc-signed (not Developer ID signed or notarized) Apple Silicon DMG. The Ed25519-signed Tauri payload and manifest live in a separate machine-readable updater release.
+- `Build macOS app` publishes an unsigned Apple Silicon DMG plus the Ed25519-signed Tauri payload and `latest.json` manifest on the same versioned release. Installed apps resolve the manifest through GitHub's latest-release redirect.
 - `Build WSL CUDA server` publishes one Linux/WSL installer archive and `ghcr.io/hagerox/stem-separator-server:latest` plus a version tag.
 
 Before the first tagged release, generate one Tauri updater keypair and keep it permanently:
@@ -100,7 +100,7 @@ npm run tauri signer generate -- -w stem-separator-updater.key
 
 Store the private key content as the GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` and its optional password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The non-secret public key is committed in `src-tauri/tauri.conf.json`. Losing or rotating the private key without a migration release prevents installed clients from trusting future updates.
 
-Ad-hoc macOS signing can stay as-is and updates will work. It is independent of the updater signature. For normal end-user distribution, Developer ID signing and notarization are still strongly recommended because ad-hoc apps continue to trigger Gatekeeper approval and offer no Apple identity assurance.
+The app bundle remains ad-hoc signed so its nested executables have a consistent code signature, while the DMG container is deliberately left unsigned. The Tauri updater signature is independent of both. For normal end-user distribution, Developer ID signing and notarization are still strongly recommended because the app continues to trigger Gatekeeper approval and offers no Apple identity assurance.
 
 Create a release by updating every product version (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `server/pyproject.toml`, and `server/src/stem_separator_server/__init__.py`), committing, and pushing a matching tag such as `v0.2.0`.
 
