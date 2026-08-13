@@ -33,19 +33,22 @@ jobs:
           version: "0.10.11"
           enable-cache: true
       - name: Build server wheel
-        run: uv build --wheel --out-dir artifacts server
+        run: uv build --wheel --out-dir package-output server
       - name: Smoke-test server package
         run: |
           uv venv .server-test --python 3.12
           uv pip install --python .server-test/bin/python "./server[test]"
           .server-test/bin/pytest -q server/tests
-          uv pip install --python .server-test/bin/python --force-reinstall artifacts/*.whl
+          uv pip install --python .server-test/bin/python --force-reinstall package-output/*.whl
           STEM_SEPARATOR_DATA_DIR="$RUNNER_TEMP/stem-separator" .server-test/bin/python -c "from stem_separator_server.app import app, environment_payload; assert app.title == 'Stem Separator Server'; print(environment_payload())"
       - name: Stage WSL installer
         run: |
-          cp server/scripts/install-wsl.sh artifacts/
-          cp server/README.md artifacts/
-          (cd artifacts && sha256sum * > SHA256SUMS)
+          BUNDLE_VERSION="${GITHUB_REF_NAME//\//-}"
+          mkdir -p artifacts bundle
+          cp server/scripts/install-wsl.sh bundle/install.sh
+          cp server/README.md bundle/README.md
+          cp package-output/*.whl bundle/
+          tar -czf "artifacts/Stem-Separator-WSL-CUDA-${BUNDLE_VERSION}.tar.gz" -C bundle .
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -70,7 +73,7 @@ jobs:
       - name: Attest server wheel
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: artifacts/*.whl
+          subject-path: artifacts/Stem-Separator-WSL-CUDA-*.tar.gz
       - name: Publish server release assets
         env:
           GH_TOKEN: ${{ github.token }}

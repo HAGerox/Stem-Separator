@@ -83,7 +83,6 @@ jobs:
         run: |
           mkdir -p artifacts
           APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          ditto -c -k --keepParent "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.app.zip
           ./scripts/package-macos-dmg.sh "$APP_PATH" artifacts/Stem-Separator-macOS-arm64.dmg
           codesign --force --sign - artifacts/Stem-Separator-macOS-arm64.dmg
           codesign --verify --verbose=2 artifacts/Stem-Separator-macOS-arm64.dmg
@@ -91,7 +90,6 @@ jobs:
             cp src-tauri/target/release/bundle/macos/*.app.tar.gz artifacts/Stem-Separator-macOS-arm64.app.tar.gz
             cp src-tauri/target/release/bundle/macos/*.app.tar.gz.sig artifacts/Stem-Separator-macOS-arm64.app.tar.gz.sig
           fi
-          (cd artifacts && shasum -a 256 * > SHA256SUMS-macOS)
 
       - name: Generate updater manifest
         if: startsWith(github.ref, 'refs/tags/v')
@@ -109,6 +107,7 @@ jobs:
             --arg signature "$SIGNATURE" \
             '{version:$version,notes:$notes,pub_date:$date,platforms:{"darwin-aarch64":{url:$url,signature:$signature}}}' \
             > artifacts/latest.json
+          rm artifacts/Stem-Separator-macOS-arm64.app.tar.gz.sig
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
