@@ -89,8 +89,8 @@ Useful endpoints:
 
 Tagged releases (`v*`) create a GitHub Release and publish update assets:
 
-- `Build macOS app` produces an ad-hoc-signed (not Developer ID signed or notarized) Apple Silicon `.app.zip`, `.dmg`, and a Tauri updater bundle. Update bundles use a separate Ed25519 updater signature.
-- `Build WSL CUDA server` publishes a verified wheel/install helper and `ghcr.io/hagerox/stem-separator-server:latest` plus a version tag.
+- `Build macOS app` publishes one ad-hoc-signed (not Developer ID signed or notarized) Apple Silicon DMG. The Ed25519-signed Tauri payload and manifest live in a separate machine-readable updater release.
+- `Build WSL CUDA server` publishes one Linux/WSL installer archive and `ghcr.io/hagerox/stem-separator-server:latest` plus a version tag.
 
 Before the first tagged release, generate one Tauri updater keypair and keep it permanently:
 
@@ -129,7 +129,7 @@ stem-separator-server-update --check
 stem-separator-server-update
 ```
 
-The updater verifies the release `SHA256SUMS`; when GitHub CLI is installed it also verifies the GitHub artifact attestation before installing. Restart the service after an update. Add `--auto-update` (or `STEM_SEPARATOR_AUTO_UPDATE=1`) to update automatically before a native server starts. Docker installations update by pulling the published image and recreating the service:
+The updater verifies GitHub's SHA-256 digest for the single Linux release bundle; when GitHub CLI is installed it also verifies the GitHub artifact attestation before installing. Restart the service after an update. Add `--auto-update` (or `STEM_SEPARATOR_AUTO_UPDATE=1`) to update automatically before a native server starts. Docker installations update by pulling the published image and recreating the service:
 
 ```bash
 docker compose -f server/compose.yaml pull

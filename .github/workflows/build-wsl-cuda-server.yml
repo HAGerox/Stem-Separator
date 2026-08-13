@@ -43,12 +43,10 @@ jobs:
           STEM_SEPARATOR_DATA_DIR="$RUNNER_TEMP/stem-separator" .server-test/bin/python -c "from stem_separator_server.app import app, environment_payload; assert app.title == 'Stem Separator Server'; print(environment_payload())"
       - name: Stage WSL installer
         run: |
-          BUNDLE_VERSION="${GITHUB_REF_NAME//\//-}"
           mkdir -p artifacts bundle
           cp server/scripts/install-wsl.sh bundle/install.sh
-          cp server/README.md bundle/README.md
           cp package-output/*.whl bundle/
-          tar -czf "artifacts/Stem-Separator-WSL-CUDA-${BUNDLE_VERSION}.tar.gz" -C bundle .
+          tar -czf "artifacts/Stem-Separator-Linux-WSL-CUDA.tar.gz" -C bundle .
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -73,7 +71,7 @@ jobs:
       - name: Attest server wheel
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: artifacts/Stem-Separator-WSL-CUDA-*.tar.gz
+          subject-path: artifacts/Stem-Separator-Linux-WSL-CUDA.tar.gz
       - name: Publish server release assets
         env:
           GH_TOKEN: ${{ github.token }}

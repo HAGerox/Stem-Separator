@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -17,6 +18,7 @@ from . import __version__
 
 RELEASE_API = "https://api.github.com/repos/HAGerox/Stem-Separator/releases/latest"
 REPOSITORY = "HAGerox/Stem-Separator"
+LINUX_BUNDLE_NAME = "Stem-Separator-Linux-WSL-CUDA.tar.gz"
 
 
 def _request_json(url: str) -> dict:
@@ -63,31 +65,35 @@ def install_latest() -> str:
     if not release["available"]:
         return "Stem Separator Server is already up to date."
     assets = {asset["name"]: asset for asset in release["assets"]}
-    wheel_name = next((name for name in assets if name.endswith("-py3-none-any.whl")), None)
-    checksum_asset = assets.get("SHA256SUMS")
-    if not wheel_name or not checksum_asset:
-        raise RuntimeError("The latest release does not contain the server wheel and SHA256SUMS.")
+    bundle_asset = assets.get(LINUX_BUNDLE_NAME)
+    if not bundle_asset:
+        raise RuntimeError(f"The latest release does not contain {LINUX_BUNDLE_NAME}.")
+    digest = bundle_asset.get("digest", "")
+    if not digest.startswith("sha256:"):
+        raise RuntimeError("The Linux update bundle does not have a GitHub SHA-256 digest.")
 
     with tempfile.TemporaryDirectory(prefix="stem-separator-update-") as directory:
         root = Path(directory)
-        wheel = root / wheel_name
-        sums = root / "SHA256SUMS"
-        _download(assets[wheel_name]["browser_download_url"], wheel)
-        _download(checksum_asset["browser_download_url"], sums)
-        expected = None
-        for line in sums.read_text().splitlines():
-            digest, _, filename = line.partition("  ")
-            if filename == wheel_name:
-                expected = digest.strip()
-                break
-        actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
-        if not expected or actual != expected:
-            raise RuntimeError("The downloaded server wheel failed SHA-256 verification.")
+        bundle = root / LINUX_BUNDLE_NAME
+        _download(bundle_asset["browser_download_url"], bundle)
+        actual = hashlib.sha256(bundle.read_bytes()).hexdigest()
+        if actual != digest.removeprefix("sha256:"):
+            raise RuntimeError("The downloaded Linux update bundle failed SHA-256 verification.")
         if shutil.which("gh"):
             subprocess.run(
-                ["gh", "attestation", "verify", str(wheel), "-R", REPOSITORY],
+                ["gh", "attestation", "verify", str(bundle), "-R", REPOSITORY],
                 check=True,
             )
+        with tarfile.open(bundle, "r:gz") as archive:
+            wheels = [member for member in archive.getmembers() if member.isfile() and member.name.endswith(".whl")]
+            if len(wheels) != 1:
+                raise RuntimeError("The Linux update bundle must contain exactly one server wheel.")
+            source = archive.extractfile(wheels[0])
+            if source is None:
+                raise RuntimeError("The server wheel could not be read from the Linux update bundle.")
+            wheel = root / Path(wheels[0].name).name
+            with source, wheel.open("wb") as output:
+                shutil.copyfileobj(source, output)
         uv = shutil.which("uv")
         command = [uv, "pip", "install", "--python", sys.executable, "--upgrade", str(wheel)] if uv else [
             sys.executable, "-m", "pip", "install", "--upgrade", str(wheel)
