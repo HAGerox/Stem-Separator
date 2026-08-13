@@ -6,7 +6,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -19,6 +22,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
 const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3";
+static ARTIFACT_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn bundled_resource(command: &str) -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
@@ -182,6 +186,9 @@ fn register_active_job(state: &ActiveJob, job_id: &str) -> Result<ActiveJobGuard
         .state
         .lock()
         .map_err(|_| "Could not track the active separation job.".to_string())?;
+    if active.job_id.is_some() {
+        return Err("A separation job is already running.".into());
+    }
     *active = ActiveJobState {
         job_id: Some(job_id.into()),
         pid: None,
@@ -558,6 +565,53 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn install_verified_part(
+    part: &Path,
+    target: &Path,
+    expected: &str,
+    name: &str,
+) -> Result<PathBuf, String> {
+    if !part.is_file() {
+        if target.is_file() && sha256_file(target)? == expected {
+            return Ok(target.to_path_buf());
+        }
+        return Err(format!(
+            "Could not finish installing model artifact {name}: the completed temporary file is missing."
+        ));
+    }
+    let actual = sha256_file(part)?;
+    if actual != expected {
+        let _ = fs::remove_file(part);
+        return Err(format!(
+            "The downloaded {name} failed its SHA-256 check. Expected {expected}, received {actual}."
+        ));
+    }
+
+    if target.is_file() {
+        if sha256_file(target)? == expected {
+            let _ = fs::remove_file(part);
+            return Ok(target.to_path_buf());
+        }
+        fs::remove_file(target).map_err(|error| {
+            format!(
+                "Could not replace corrupt cached model artifact {}: {error}",
+                target.display()
+            )
+        })?;
+    }
+
+    match fs::rename(part, target) {
+        Ok(()) => Ok(target.to_path_buf()),
+        Err(_error) if target.is_file() && sha256_file(target)? == expected => {
+            let _ = fs::remove_file(part);
+            Ok(target.to_path_buf())
+        }
+        Err(error) => Err(format!(
+            "Could not finish installing model artifact {name}: {error}"
+        )),
+    }
+}
+
 async fn download_verified_artifact(
     client: &reqwest::Client,
     artifact: &ModelArtifact,
@@ -578,23 +632,18 @@ async fn download_verified_artifact(
         if sha256_file(&target)? == expected {
             return Ok(target);
         }
-        fs::remove_file(&target).map_err(|error| {
-            format!(
-                "Could not replace corrupt cached model artifact {}: {error}",
-                target.display()
-            )
-        })?;
+        if let Err(error) = fs::remove_file(&target) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "Could not replace corrupt cached model artifact {}: {error}",
+                    target.display()
+                ));
+            }
+        }
     }
 
-    let part = model_dir.join(format!(".{name}.part"));
-    if part.exists() {
-        fs::remove_file(&part).map_err(|error| {
-            format!(
-                "Could not clear interrupted model download {}: {error}",
-                part.display()
-            )
-        })?;
-    }
+    let sequence = ARTIFACT_DOWNLOAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let part = model_dir.join(format!(".{name}.{}.{}.part", std::process::id(), sequence));
     let mut response = client
         .get(&artifact.url)
         .send()
@@ -623,14 +672,12 @@ async fn download_verified_artifact(
         format!("Could not finish saving model artifact {name}: {error}")
     })?;
     drop(file);
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected {
+    let streamed = format!("{:x}", hasher.finalize());
+    if streamed != expected {
         let _ = fs::remove_file(&part);
-        return Err(format!("The downloaded {name} failed its SHA-256 check. Expected {expected}, received {actual}."));
+        return Err(format!("The downloaded {name} failed its SHA-256 check. Expected {expected}, received {streamed}."));
     }
-    fs::rename(&part, &target)
-        .map_err(|error| format!("Could not finish installing model artifact {name}: {error}"))?;
-    Ok(target)
+    install_verified_part(&part, &target, &expected, name)
 }
 
 async fn ensure_model_artifacts(run: &ModelRun, model_dir: &Path) -> Result<(), String> {
@@ -1415,7 +1462,13 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_corrupt_checkpoint_error, safe_artifact_name};
+    use super::{
+        install_verified_part, is_corrupt_checkpoint_error, safe_artifact_name, sha256_file,
+    };
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn registry_artifact_names_cannot_escape_the_model_directory() {
@@ -1435,5 +1488,29 @@ mod tests {
         assert!(!is_corrupt_checkpoint_error(
             "The input audio file is not supported"
         ));
+    }
+
+    #[test]
+    fn completed_concurrent_download_is_accepted_after_its_part_was_moved() {
+        let root = std::env::temp_dir().join(format!(
+            "stem-separator-artifact-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let part = root.join(".model.ckpt.part");
+        let target = root.join("model.ckpt");
+        fs::write(&part, b"verified checkpoint").unwrap();
+        let expected = sha256_file(&part).unwrap();
+        fs::rename(&part, &target).unwrap();
+
+        assert_eq!(
+            install_verified_part(&part, &target, &expected, "model.ckpt").unwrap(),
+            target
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

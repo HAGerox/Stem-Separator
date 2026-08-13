@@ -444,6 +444,7 @@ export default function App() {
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
+  const starting = useRef(false);
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected) : [], [catalog, selected]);
 
   useEffect(() => {
@@ -518,7 +519,8 @@ export default function App() {
   };
 
   const start = async () => {
-    if (!catalog || !files.length || !selected.length) return;
+    if (starting.current || !catalog || !files.length || !selected.length) return;
+    starting.current = true;
     cancelled.current = false;
     setView("processing");
     setError(null);
@@ -538,6 +540,7 @@ export default function App() {
           return file.isVideo ? [wav, { ...wav, name: `${file.name}-${stem}.mp4`, isVideo: true }] : [wav];
         }));
         setResult({ jobId: "preview", outputDirectory: "", outputs, warnings: ["The browser preview demonstrates the complete interface."], usedDemoMode: true });
+        starting.current = false;
         setConfirmStop(false); setProgress((current) => ({ ...current, overall: 100 })); setView("results");
       }, 12500);
       return;
@@ -548,6 +551,8 @@ export default function App() {
       if (!cancelled.current) { setConfirmStop(false); setResult(nextResult); setView("results"); }
     } catch (reason) {
       if (!cancelled.current) { setError(String(reason)); setView("select"); }
+    } finally {
+      starting.current = false;
     }
   };
 
@@ -558,7 +563,7 @@ export default function App() {
     if (previewCompletion.current) window.clearTimeout(previewCompletion.current);
     try { await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId); }
     catch (reason) { setError(String(reason)); }
-    finally { setStopping(false); setConfirmStop(false); setView("select"); }
+    finally { starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
   };
 
   const reset = () => { setFiles([]); setResult(null); setSelected(["vocals"]); setView("drop"); };
