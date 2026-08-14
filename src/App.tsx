@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
-  ChevronDown,
   CircleAlert,
   CircleCheck,
   Download,
@@ -12,7 +11,6 @@ import {
   FolderOpen,
   Info,
   LoaderCircle,
-  LockKeyhole,
   MoreHorizontal,
   Pause,
   Play,
@@ -58,12 +56,6 @@ const STEMS: StemOption[] = [
 
 const MULTI_TRACK_STEMS: StemId[] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
 
-const QUICK_CONFIGS: Array<{ label: string; description: string; detail: string; glyph: string; stems: StemId[] }> = [
-  { label: "Vocals Only", description: "Isolate lead and backing voices", detail: "Vocals", glyph: "voice", stems: ["vocals"] },
-  { label: "Instrumental Only", description: "Keep the full mix without vocals", detail: "Instrumental", glyph: "wave", stems: ["instrumental"] },
-  { label: "Multi-Track", description: "One complete set that adds back up to the original", detail: "Includes an automatic Other remainder", glyph: "multi", stems: MULTI_TRACK_STEMS },
-];
-
 function extension(name: string) {
   const value = name.split(".").pop();
   return value && value !== name ? value.toLowerCase() : "";
@@ -83,10 +75,6 @@ function formatTime(seconds?: number) {
 
 function stemLabel(stem: StemId) {
   return STEMS.find((item) => item.id === stem)?.label || stem;
-}
-
-function exactSelection(first: StemId[], second: StemId[]) {
-  return first.length === second.length && first.every((stem) => second.includes(stem));
 }
 
 function StemGlyph({ type }: { type: string }) {
@@ -244,10 +232,9 @@ function FilePill({ file, onRemove }: { file: InputFile; onRemove: () => void })
 
 function StemCard({ stem, active, onClick }: { stem: StemOption; active: boolean; onClick: () => void }) {
   return (
-    <button className={`stem-card ${active ? "selected" : ""}`} onClick={onClick}>
+    <button className={`stem-card ${active ? "selected" : ""}`} aria-pressed={active} onClick={onClick}>
       <span className="stem-icon"><StemGlyph type={stem.glyph} /></span>
-      <span className="stem-copy"><strong>{stem.label}</strong><small>{stem.description}</small></span>
-      <span className="stem-check">{active && <Check size={14} strokeWidth={3} />}</span>
+      <span className="stem-copy"><strong>{stem.label}</strong></span>
     </button>
   );
 }
@@ -264,7 +251,6 @@ function SelectView({
   onBack,
   catalog,
   dragging,
-  uploadStatus,
 }: {
   files: InputFile[];
   selected: StemId[];
@@ -277,116 +263,62 @@ function SelectView({
   onBack: () => void;
   catalog: Catalog | null;
   dragging: boolean;
-  uploadStatus?: ServerUploadSnapshot | null;
 }) {
-  const [moreOpen, setMoreOpen] = useState(false);
   const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
   const visibleStems = STEMS.filter((stem) => stem.id !== "other" && supportedStems.has(stem.id));
-  const plan = useMemo(() => (catalog ? buildModelPlan(catalog, selected, multiTrack) : []), [catalog, multiTrack, selected]);
 
   const toggleStem = (stem: StemId) => {
+    if (multiTrack) {
+      setMultiTrack(false);
+      setSelected([stem]);
+      return;
+    }
     setMultiTrack(false);
     setSelected(selected.includes(stem) ? selected.filter((item) => item !== stem) : [...selected, stem]);
   };
 
-  const choosePreset = (label: string, stems: StemId[]) => {
-    const nextMultiTrack = label === "Multi-Track";
-    setMultiTrack(nextMultiTrack);
-    setSelected(stems);
-    if (nextMultiTrack) setMoreOpen(false);
-  };
-
-  const switchToIndividual = () => {
-    setMultiTrack(false);
-    setSelected(MULTI_TRACK_STEMS.filter((stem) => stem !== "other"));
-    setMoreOpen(true);
+  const chooseMultiTrack = () => {
+    setMultiTrack(true);
+    setSelected(MULTI_TRACK_STEMS);
   };
 
   return (
     <main className="select-view content-shell">
       <button className="page-back-button" onClick={onBack}><ChevronLeft size={16} strokeWidth={2.2} /> Back</button>
-      <section className={`file-row ${dragging ? "is-dragging" : ""}`}>
-        {dragging && <div className="add-drop-hint"><Upload size={18} /><span>Drop files or a folder to add them</span></div>}
-        <div className="file-list" aria-label={`${files.length} selected ${files.length === 1 ? "file" : "files"}`}>
-          {files.map((file, index) => <FilePill key={`${file.path}-${index}`} file={file} onRemove={() => onRemove(index)} />)}
-        </div>
-        <button className="add-button" onClick={onAdd}><Plus size={16} /> Add</button>
-      </section>
 
-      <section className="stem-section">
-        <h1>Choose your stems</h1>
-        <p className="stem-intro">Choose a complete Multi-Track split, or extract individual parts.</p>
-        <div className="preset-grid" aria-label="Separation types">
-          {QUICK_CONFIGS.map((preset) => (
-            <button key={preset.label} className={`preset-card ${(preset.label === "Multi-Track" ? multiTrack : !multiTrack && exactSelection(selected, preset.stems)) ? "active" : ""}`} onClick={() => choosePreset(preset.label, preset.stems)}>
-              <span className="preset-icon"><StemGlyph type={preset.glyph} /></span>
-              <span className="preset-copy">
-                <strong>{preset.label}</strong>
-                <small>{preset.description}</small>
-                <em>{preset.detail}</em>
-              </span>
-              <span className="preset-check">{(preset.label === "Multi-Track" ? multiTrack : !multiTrack && exactSelection(selected, preset.stems)) && <Check size={15} strokeWidth={3} />}</span>
-            </button>
-          ))}
-        </div>
+      <div className="choose-layout">
+        <aside className={`file-panel ${dragging ? "is-dragging" : ""}`}>
+          {dragging && <div className="add-drop-hint"><Upload size={18} /><span>Drop files here</span></div>}
+          <header className="file-panel-heading">
+            <h2>Files</h2>
+            <span>{files.length}</span>
+          </header>
+          <div className="file-panel-list" aria-label={`${files.length} selected ${files.length === 1 ? "file" : "files"}`}>
+            {files.map((file, index) => <FilePill key={`${file.path}-${index}`} file={file} onRemove={() => onRemove(index)} />)}
+          </div>
+          <button className="add-button" onClick={onAdd}><Plus size={16} /> Add files</button>
+        </aside>
 
-        {multiTrack ? (
-          <section className="multitrack-lock" aria-label="Multi-Track contents">
-            <div className="multitrack-lock-heading">
-              <span className="lock-icon"><LockKeyhole size={16} /></span>
-              <div><strong>Complete set — kept together</strong><span>All six tracks come from one matched separation and add back up to the original mix.</span></div>
-            </div>
-            <div className="multitrack-chips">
-              {MULTI_TRACK_STEMS.map((stem) => <span className={stem === "other" ? "other-chip" : ""} key={stem}>
-                <Check size={11} strokeWidth={3} />
-                <strong>{stemLabel(stem)}</strong>
-                {stem === "other" && <small>everything left after the named parts</small>}
-              </span>)}
-            </div>
-            <button className="switch-mode-button" onClick={switchToIndividual}>Switch to individual stems</button>
-          </section>
-        ) : <>
-          <button className={`more-stems-toggle ${moreOpen ? "open" : ""}`} onClick={() => setMoreOpen((open) => !open)} aria-expanded={moreOpen}>
-            <span><strong>Choose individual stems</strong><small>Each uses its own best separator</small></span>
-            <ChevronDown size={16} />
+        <section className="stem-picker">
+          <h1>Choose your stems</h1>
+
+          <button className={`multitrack-option ${multiTrack ? "selected" : ""}`} aria-pressed={multiTrack} onClick={chooseMultiTrack}>
+            <span className="multitrack-option-icon"><StemGlyph type="multi" /></span>
+            <strong>Multi-Track</strong>
           </button>
-          {moreOpen && (
-            <div className="manual-stems-panel">
-              <p className="individual-note">Individual stems are separate extractions. They are not a matched set and are not intended to add back up to the original.</p>
-              <div className="stem-grid more-stem-grid">
-                {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} active={selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
-              </div>
-            </div>
-          )}
-        </>}
-      </section>
 
-      <section className="selection-footer">
-        {uploadStatus?.state === "uploading" ? (
-          <div className="smart-plan upload-plan">
-            <LoaderCircle className="spin" size={12} />
-            <span><strong>Uploading in the background</strong> · {Math.round(uploadStatus.progress)}%</span>
+          <h2>Individual stems</h2>
+          <div className="stem-grid">
+            {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
           </div>
-        ) : uploadStatus?.state === "complete" ? (
-          <div className="smart-plan upload-plan ready">
-            <CircleCheck size={12} />
-            <span><strong>Files ready on this server</strong></span>
-          </div>
-        ) : uploadStatus?.state === "failed" ? (
-          <div className="smart-plan upload-plan failed">
-            <CircleAlert size={12} />
-            <span><strong>Upload will retry when you start</strong></span>
-          </div>
-        ) : !multiTrack && plan.length > 1 ? (
-          <div className="smart-plan">
-            <span className="plan-bullet" />
-            <span><strong>Best model chosen for each stem</strong> · {plan.length} passes</span>
-          </div>
-        ) : multiTrack ? <div className="smart-plan"><span className="plan-bullet" /><span><strong>Coherent Multi-Track split</strong> · sums to the original</span></div> : <span />}
-        <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
-          {multiTrack ? "Create Multi-Track" : `Separate ${selected.length || ""} ${selected.length === 1 ? "stem" : "stems"}`}
-        </button>
-      </section>
+
+          <footer className="picker-footer">
+            <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
+              {multiTrack ? "Create Multi-Track" : `Separate ${selected.length || ""} ${selected.length === 1 ? "stem" : "stems"}`}
+            </button>
+          </footer>
+        </section>
+      </div>
     </main>
   );
 }
@@ -1001,7 +933,7 @@ export default function App() {
     >
       <Header update={update} updating={updating} updateProgress={updateProgress} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
-      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} uploadStatus={uploadStatus} />}
+      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} />}
       {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} plannedDownloads={plannedDownloads} onStop={() => setConfirmStop(true)} />}
       {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
