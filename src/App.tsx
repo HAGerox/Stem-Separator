@@ -230,9 +230,9 @@ function FilePill({ file, onRemove }: { file: InputFile; onRemove: () => void })
   );
 }
 
-function StemCard({ stem, active, onClick }: { stem: StemOption; active: boolean; onClick: () => void }) {
+function StemCard({ stem, active, prominent = false, onClick }: { stem: StemOption; active: boolean; prominent?: boolean; onClick: () => void }) {
   return (
-    <button className={`stem-card ${active ? "selected" : ""}`} aria-pressed={active} onClick={onClick}>
+    <button className={`stem-card ${prominent ? "prominent" : ""} ${active ? "selected" : ""}`} aria-pressed={active} onClick={onClick}>
       <span className="stem-icon"><StemGlyph type={stem.glyph} /></span>
       <span className="stem-copy"><strong>{stem.label}</strong></span>
     </button>
@@ -312,7 +312,7 @@ function SelectView({
 
           <h2>Individual stems</h2>
           <div className="stem-grid">
-            {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
+            {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} prominent={stem.id === "vocals" || stem.id === "instrumental"} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
           </div>
         </section>
       </div>
