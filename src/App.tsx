@@ -425,15 +425,15 @@ function ProcessingView({
   const stages = useMemo(() => [
     ...(includesUpload ? [{
       id: "upload",
-      label: "Uploading files",
-      detail: files.length === 1 ? `Sending ${files[0].name} to this server` : `Sending ${files.length} files to this server`,
+      label: "Sending your files",
+      detail: files.length === 1 ? `Uploading ${files[0].name} securely` : `Uploading ${files.length} files securely`,
       phase: "upload" as const,
       modelIndex: 0,
     }] : []),
     ...visibleDownloads.map((modelIndex) => ({
       id: `download-${modelIndex}`,
-      label: `Downloading ${plan[modelIndex - 1]?.modelName || "separation model"}`,
-      detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · for ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "this separation"}`,
+      label: "Downloading the separation model",
+      detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · needed for ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "this separation"}`,
       phase: "download" as const,
       modelIndex,
     })),
@@ -471,22 +471,35 @@ function ProcessingView({
       : `separate-${presentedProgress.modelIndex || 1}`;
   const activeIndex = Math.max(0, stages.findIndex((stage) => stage.id === activeId));
   const [shownActiveId, setShownActiveId] = useState(activeId);
+  const [leavingStageId, setLeavingStageId] = useState<string | null>(null);
+  const currentShownIndex = Math.max(0, stages.findIndex((stage) => stage.id === shownActiveId));
   useEffect(() => {
     if (shownActiveId === activeId) return;
-    if (phase === "upload" || phase === "download") {
+    if (activeIndex <= currentShownIndex) {
       setShownActiveId(activeId);
+      setLeavingStageId(null);
       return;
     }
-    const timer = window.setTimeout(() => setShownActiveId(activeId), 540);
-    return () => window.clearTimeout(timer);
-  }, [activeId, phase, shownActiveId]);
+    const completedId = shownActiveId;
+    const leaveTimer = window.setTimeout(() => setLeavingStageId(completedId), 1050);
+    const advanceTimer = window.setTimeout(() => {
+      setShownActiveId(activeId);
+      setLeavingStageId(null);
+    }, 1470);
+    return () => {
+      window.clearTimeout(leaveTimer);
+      window.clearTimeout(advanceTimer);
+    };
+  }, [activeId, activeIndex, currentShownIndex, shownActiveId]);
   const shownActiveIndex = Math.max(0, stages.findIndex((stage) => stage.id === shownActiveId));
   const visibleStart = shownActiveIndex;
   const visibleStages = stages.slice(visibleStart, shownActiveIndex + 4);
-  const activeStage = stages[activeIndex];
-  const activeHeadline = presentedProgress.stage || activeStage?.label || "Preparing separation";
-  const activeDetail = presentedProgress.detail || activeStage?.detail || "Preparing the next step";
+  const shownStage = stages[shownActiveIndex] || stages[activeIndex];
+  const shownStepComplete = shownActiveIndex < activeIndex || phase === "complete";
+  const activeHeadline = shownStage?.label || "Preparing separation";
+  const activeDetail = shownStage?.detail || "Preparing the next step";
   const displayedPercent = phase === "complete" ? 100 : Math.max(1, Math.round(displayedProgress));
+  const hasMoreStages = stages.length > shownActiveIndex + 4;
   return (
     <main className="processing-view content-shell">
       <section className="processing-card">
@@ -506,25 +519,26 @@ function ProcessingView({
         <div className="main-progress"><span style={{ width: `${Math.max(1, displayedProgress)}%` }} /></div>
         </div>
 
-        <div className="stage-list" style={{ "--future-count": Math.max(0, stages.length - activeIndex - 1) } as React.CSSProperties}>
+        <div className="stage-list" style={{
+          "--visible-stage-count": visibleStages.length,
+          "--more-stage-height": hasMoreStages ? "12px" : "0px",
+        } as React.CSSProperties}>
           {visibleStages.map((stage, visibleIndex) => {
             const index = visibleStart + visibleIndex;
             const done = index < activeIndex || phase === "complete";
-            const active = index === activeIndex && phase !== "complete";
-            const phaseProgress = active ? Math.min(100, Math.max(0, presentedProgress.phaseProgress ?? (stage.phase === "separate" ? presentedProgress.overall : 4))) : done ? 100 : 0;
-            const label = active ? activeHeadline : stage.label;
-            const detail = active ? activeDetail : stage.detail;
+            const active = index === shownActiveIndex && !shownStepComplete;
+            const phaseProgress = done ? 100 : active ? Math.min(100, Math.max(0, presentedProgress.phaseProgress ?? (stage.phase === "separate" ? presentedProgress.overall : 4))) : 0;
             return (
-              <div className={`stage-row ${done ? "done leaving" : ""} ${active ? "active" : ""} future-${Math.max(0, index - activeIndex)}`} key={stage.id}>
+              <div className={`stage-row ${done ? "done" : ""} ${stage.id === leavingStageId ? "leaving" : ""} ${active ? "active" : ""} future-${Math.max(0, index - shownActiveIndex)}`} key={stage.id}>
                 <StageProgress progress={phaseProgress} active={active} done={done} />
                 <div className="stage-copy">
-                  <div className="stage-title"><strong>{label}</strong><span>{done ? "Done" : active ? `${Math.round(phaseProgress)}%` : "Waiting"}</span></div>
-                  <small>{detail}</small>
+                  <div className="stage-title"><strong>{stage.label}</strong><span>{done ? "Done" : active ? `${Math.round(phaseProgress)}%` : "Waiting"}</span></div>
+                  <small>{stage.detail}</small>
                 </div>
               </div>
             );
           })}
-          {stages.length > activeIndex + 4 && <div className="more-stages" aria-hidden="true"><i /><i /><i /></div>}
+          {hasMoreStages && <div className="more-stages" aria-hidden="true"><i /><i /><i /></div>}
         </div>
 
         <div className="processing-footer">

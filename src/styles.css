@@ -201,11 +201,11 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .activity-disc { width: 54px; height: 54px; flex: 0 0 auto; border-radius: 18px; background: var(--accent-pale); color: var(--accent); display: grid; place-items: center; overflow: hidden; }
 .activity-disc svg { animation: activitySpin 1.05s cubic-bezier(.55,.2,.45,.8) infinite; }
 @keyframes activitySpin { to { transform: rotate(360deg); } }
-.stage-list { padding: 10px 0 7px; overflow: hidden; }
-.stage-row { display: flex; align-items: center; min-height: 58px; gap: 12px; color: var(--soft); transition: opacity .38s ease, transform .38s cubic-bezier(.22,.8,.2,1), filter .38s ease; animation: stageEnter .42s cubic-bezier(.22,.8,.2,1); }
+.stage-list { --stage-row-height: 58px; height: calc(var(--visible-stage-count) * var(--stage-row-height) + var(--more-stage-height) + 17px); padding: 10px 0 7px; overflow: hidden; transition: height .44s cubic-bezier(.22,.8,.2,1); }
+.stage-row { display: flex; align-items: center; height: var(--stage-row-height); gap: 12px; color: var(--soft); transition: opacity .38s ease, transform .38s cubic-bezier(.22,.8,.2,1), filter .38s ease; animation: stageEnter .42s cubic-bezier(.22,.8,.2,1); }
 @keyframes stageEnter { from { opacity: 0; transform: translateY(18px); } }
-.stage-row.leaving { animation: stageComplete .55s cubic-bezier(.22,.8,.2,1); }
-@keyframes stageComplete { 0% { transform: translateY(0); } 38% { transform: translateY(0) scale(1.01); } 100% { transform: translateY(-7px); } }
+.stage-row.leaving { animation: stageComplete .42s cubic-bezier(.4,0,.2,1) both; }
+@keyframes stageComplete { to { opacity: 0; transform: translateY(-24px); } }
 .stage-row.future-1 { opacity: .7; filter: saturate(.72); }
 .stage-row.future-2 { opacity: .34; filter: saturate(.4); }
 .stage-row.future-3 { opacity: .1; filter: saturate(.15); }
@@ -216,7 +216,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .stage-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .stage-title { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }.stage-title strong { font-size: 12px; font-weight: 600; color: var(--soft); }.stage-title span { font-size: 9px; color: var(--soft); font-variant-numeric: tabular-nums; }
 .stage-copy small { font-size: 9px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stage-row.active .stage-title strong, .stage-row.done .stage-title strong { color: var(--ink); }.stage-row.active .stage-copy small { color: var(--muted); }.stage-row.active .stage-title span { color: var(--accent); font-weight: 650; }.stage-row.done .stage-title span { color: var(--green); }
+.stage-row.active .stage-title strong { color: var(--ink); }.stage-row.active .stage-copy small { color: var(--muted); }.stage-row.active .stage-title span { color: var(--accent); font-weight: 650; }.stage-row.done .stage-title strong, .stage-row.done .stage-title span { color: var(--green); }.stage-row.done .stage-copy small { color: color-mix(in srgb, var(--green) 72%, var(--muted)); }
 .more-stages { height: 12px; margin-left: 36px; display: flex; gap: 4px; align-items: center; opacity: .18; }.more-stages i { width: 4px; height: 4px; border-radius: 50%; background: var(--soft); }.more-stages i:nth-child(2) { opacity: .65; }.more-stages i:nth-child(3) { opacity: .35; }
 .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 .processing-footer { border-top: 1px solid var(--line); padding-top: 15px; display: flex; justify-content: flex-end; }
@@ -294,7 +294,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
   .activity-disc { width: 46px; height: 46px; border-radius: 15px; }
   .processing-summary h1 { font-size: 19px; }
   .processing-topline span { max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .stage-row { min-height: 62px; }
+  .stage-list { --stage-row-height: 62px; }
   .result-row { height: auto; min-height: 92px; padding: 13px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 30px; gap: 8px 11px; }
   .result-label { width: auto; }
   .waveform { grid-column: 1 / -1; grid-row: 2; min-width: 0; width: 100%; }
