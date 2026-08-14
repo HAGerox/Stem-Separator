@@ -42,6 +42,11 @@ export async function processJob(payload: {
   return invoke<ProcessResult>("process_job", { request: payload });
 }
 
+export async function requiredModelDownloads(plan: ModelRun[]): Promise<number[]> {
+  if (!inTauri) return [];
+  return invoke<number[]>("required_model_downloads", { plan });
+}
+
 export async function cancelJob(jobId?: string): Promise<boolean> {
   if (!inTauri) return true;
   return invoke<boolean>("cancel_job", { jobId });

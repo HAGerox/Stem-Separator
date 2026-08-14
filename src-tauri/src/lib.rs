@@ -672,6 +672,7 @@ fn install_verified_part(
 
 async fn download_verified_artifact(
     app: &AppHandle,
+    active_job: &ActiveJob,
     job_id: &str,
     client: &reqwest::Client,
     artifact: &ModelArtifact,
@@ -728,6 +729,10 @@ async fn download_verified_artifact(
         let _ = fs::remove_file(&part);
         format!("The download of {name} was interrupted: {error}")
     })? {
+        if let Err(error) = ensure_job_running(active_job, job_id) {
+            let _ = fs::remove_file(&part);
+            return Err(error);
+        }
         file.write_all(&chunk).map_err(|error| {
             let _ = fs::remove_file(&part);
             format!("Could not save model artifact {name}: {error}")
@@ -771,6 +776,7 @@ async fn download_verified_artifact(
 
 async fn ensure_model_artifacts(
     app: &AppHandle,
+    active_job: &ActiveJob,
     job_id: &str,
     run: &ModelRun,
     model_dir: &Path,
@@ -788,7 +794,7 @@ async fn ensure_model_artifacts(
     let artifact_count = run.artifacts.len();
     for (artifact_index, artifact) in run.artifacts.iter().enumerate() {
         let path = download_verified_artifact(
-            app, job_id, &client, artifact, model_dir, &run.model_name,
+            app, active_job, job_id, &client, artifact, model_dir, &run.model_name,
             model_index, model_count, artifact_index, artifact_count,
         ).await?;
         if matches!(
@@ -847,6 +853,23 @@ fn model_artifacts_ready(run: &ModelRun, model_dir: &Path) -> bool {
         .file_stem()
         .and_then(|value| value.to_str())
         .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
+}
+
+#[tauri::command]
+fn required_model_downloads(app: AppHandle, plan: Vec<ModelRun>) -> Result<Vec<usize>, String> {
+    let model_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("Could not locate the app cache: {error}"))?
+        .join("models");
+    Ok(plan
+        .iter()
+        .enumerate()
+        .filter_map(|(index, run)| {
+            (!run.artifacts.is_empty() && !model_artifacts_ready(run, &model_dir))
+                .then_some(index + 1)
+        })
+        .collect())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1051,7 +1074,7 @@ async fn run_separator_attempt(
                         phase_progress: 0.0,
                     },
                 );
-                ensure_model_artifacts(app, job_id, run, model_dir, model_index, model_count).await?;
+                ensure_model_artifacts(app, active_job, job_id, run, model_dir, model_index, model_count).await?;
                 return Box::pin(run_separator_attempt(
                     app,
                     active_job,
@@ -1336,7 +1359,7 @@ async fn process_job(
                 phase_progress: 0.0,
             },
         );
-        ensure_model_artifacts(&app, &job_id, run, &model_dir, index + 1, model_count).await?;
+        ensure_model_artifacts(&app, active_job.inner(), &job_id, run, &model_dir, index + 1, model_count).await?;
     }
 
     for (file_index, source) in inputs.iter().enumerate() {
@@ -1611,6 +1634,7 @@ pub fn run() {
             check_for_update,
             install_update,
             resolve_inputs,
+            required_model_downloads,
             process_job,
             cancel_job,
             reveal_path

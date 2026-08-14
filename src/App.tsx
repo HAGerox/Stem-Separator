@@ -27,7 +27,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { availableStems, buildModelPlan, loadCatalog } from "./lib/catalog";
-import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, resolveInputs, revealPath } from "./lib/native";
+import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, requiredModelDownloads, resolveInputs, revealPath } from "./lib/native";
 import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
 import type { ServerUploadHandle, ServerUploadSnapshot } from "./lib/server";
 import { serverMode } from "./lib/runtime";
@@ -395,11 +395,13 @@ function ProcessingView({
   progress,
   files,
   plan,
+  plannedDownloads,
   onStop,
 }: {
   progress: JobProgress;
   files: InputFile[];
   plan: ReturnType<typeof buildModelPlan>;
+  plannedDownloads: number[];
   onStop: () => void;
 }) {
   const displayedProgress = useSmoothedProgress(progress);
@@ -407,7 +409,7 @@ function ProcessingView({
   const needsVideoPreparation = files.some((file) => file.isVideo);
   const needsAlignment = files.some((file) => file.extension !== "wav");
   const [sawUpload, setSawUpload] = useState(progress.phase === "upload");
-  const [downloads, setDownloads] = useState<number[]>([]);
+  const [downloads, setDownloads] = useState<number[]>(plannedDownloads);
 
   useEffect(() => {
     if (presentedProgress.phase === "upload") setSawUpload(true);
@@ -689,6 +691,7 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [uploadStatus, setUploadStatus] = useState<ServerUploadSnapshot | null>(null);
+  const [plannedDownloads, setPlannedDownloads] = useState<number[]>([]);
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
@@ -696,6 +699,7 @@ export default function App() {
   const browserFiles = useRef(new Map<string, File>());
   const uploadHandle = useRef<ServerUploadHandle | null>(null);
   const activeServerJobId = useRef<string | null>(null);
+  const nativeJobCompletion = useRef<Promise<void> | null>(null);
   const uploadKey = useRef<string | null>(null);
   const uploadGeneration = useRef(0);
   const filesRef = useRef<InputFile[]>(files);
@@ -835,6 +839,17 @@ export default function App() {
     if (starting.current || !catalog || !files.length || !selected.length) return;
     starting.current = true;
     cancelled.current = false;
+    let nextDownloads: number[] = [];
+    if (inTauri) {
+      try {
+        nextDownloads = await requiredModelDownloads(plan);
+      } catch (reason) {
+        starting.current = false;
+        setError(String(reason));
+        return;
+      }
+    }
+    setPlannedDownloads(nextDownloads);
     setView("processing");
     setError(null);
     const startsWithVideo = files.some((file) => file.isVideo);
@@ -843,18 +858,19 @@ export default function App() {
       serverUpload = beginBackgroundUpload();
     }
     const uploadPending = !!serverUpload && serverUpload.snapshot().state !== "complete";
+    const firstDownload = nextDownloads[0];
     setProgress({
       jobId: uploadPending ? "uploading" : "starting",
       overall: uploadPending ? 1 + 4 * serverUpload!.snapshot().progress / 100 : 1,
       fileIndex: 0,
       fileCount: files.length,
-      stage: uploadPending ? "Uploading files" : serverMode ? "Starting separation" : startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
+      stage: uploadPending ? "Uploading files" : firstDownload ? "Downloading the separation model" : serverMode ? "Starting separation" : startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
       detail: uploadPending
         ? files.length === 1 ? `Sending ${files[0].name} to this server` : `Sending ${files.length} files to this server`
-        : serverMode ? "The files are ready on this server" : startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
-      modelIndex: uploadPending || startsWithVideo ? undefined : 1,
+        : firstDownload ? `${plan[firstDownload - 1]?.modelName || "Separation model"} · needed for this separation` : serverMode ? "The files are ready on this server" : startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
+      modelIndex: uploadPending || startsWithVideo ? undefined : firstDownload || 1,
       modelCount: plan.length,
-      phase: uploadPending ? "upload" : startsWithVideo ? "prepare" : "separate",
+      phase: uploadPending ? "upload" : firstDownload ? "download" : startsWithVideo ? "prepare" : "separate",
       phaseProgress: uploadPending ? serverUpload!.snapshot().progress : 1,
     });
 
@@ -902,11 +918,14 @@ export default function App() {
     }
 
     try {
-      const nextResult = await processJob({ paths: files.map((file) => file.path), stems: selected, plan, keepVideo: true, demoMode: false });
+      const jobPromise = processJob({ paths: files.map((file) => file.path), stems: selected, plan, keepVideo: true, demoMode: false });
+      nativeJobCompletion.current = jobPromise.then(() => undefined, () => undefined);
+      const nextResult = await jobPromise;
       if (!cancelled.current) { setConfirmStop(false); setResult(nextResult); setView("results"); }
     } catch (reason) {
       if (!cancelled.current) { setError(String(reason)); setView("select"); }
     } finally {
+      nativeJobCompletion.current = null;
       starting.current = false;
     }
   };
@@ -921,7 +940,10 @@ export default function App() {
         await uploadHandle.current?.cancel();
         await cancelServerJob(activeServerJobId.current || progress.jobId);
       }
-      else await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId);
+      else {
+        await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId);
+        await nativeJobCompletion.current;
+      }
     }
     catch (reason) { setError(String(reason)); }
     finally { activeServerJobId.current = null; starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
@@ -980,7 +1002,7 @@ export default function App() {
       <Header update={update} updating={updating} updateProgress={updateProgress} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
       {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} uploadStatus={uploadStatus} />}
-      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}
+      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} plannedDownloads={plannedDownloads} onStop={() => setConfirmStop(true)} />}
       {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
       {view === "processing" && confirmStop && <ConfirmStop stopping={stopping} onCancel={() => setConfirmStop(false)} onConfirm={stop} />}
