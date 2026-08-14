@@ -855,6 +855,26 @@ fn model_artifacts_ready(run: &ModelRun, model_dir: &Path) -> bool {
         .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
 }
 
+fn model_artifacts_present(run: &ModelRun, model_dir: &Path) -> bool {
+    let artifacts_present = !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
+        safe_artifact_name(&artifact.name)
+            .is_ok_and(|name| model_dir.join(name).is_file())
+    });
+    if !artifacts_present {
+        return false;
+    }
+    let has_config = run.artifacts.iter().any(|artifact| {
+        matches!(Path::new(&artifact.name).extension().and_then(|value| value.to_str()), Some("yaml" | "yml"))
+    });
+    if !has_config {
+        return true;
+    }
+    Path::new(&run.model_filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
+}
+
 #[tauri::command]
 fn required_model_downloads(app: AppHandle, plan: Vec<ModelRun>) -> Result<Vec<usize>, String> {
     let model_dir = app
@@ -866,7 +886,7 @@ fn required_model_downloads(app: AppHandle, plan: Vec<ModelRun>) -> Result<Vec<u
         .iter()
         .enumerate()
         .filter_map(|(index, run)| {
-            (!run.artifacts.is_empty() && !model_artifacts_ready(run, &model_dir))
+            (!run.artifacts.is_empty() && !model_artifacts_present(run, &model_dir))
                 .then_some(index + 1)
         })
         .collect())
