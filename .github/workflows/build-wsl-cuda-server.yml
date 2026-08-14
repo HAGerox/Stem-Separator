@@ -61,6 +61,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
   server-release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -83,7 +84,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for attempt in {1..20}; do
+          for _attempt in {1..20}; do
             gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null && break
             sleep 3
           done
@@ -95,8 +96,23 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          fetch-depth: 0
+      - name: Check whether container integration changed
+        id: container-changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" HEAD | grep -Eq '^(\.dockerignore|server/(\.dockerignore|Dockerfile|compose.yaml|pyproject.toml|uv.lock|scripts/)|\.github/workflows/build-wsl-cuda-server.yml)'; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "Python, WebUI, and package tests cover this change; skipping the multi-gigabyte CUDA image export."
+          fi
+      - if: steps.container-changes.outputs.required == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       - name: Build CUDA image
+        if: steps.container-changes.outputs.required == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -104,13 +120,13 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ghcr.io/hagerox/stem-separator-server:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/hagerox/stem-separator-server:buildcache
       - name: Smoke-test image without a GPU
+        if: steps.container-changes.outputs.required == 'true'
         run: |
           docker run -d --name stem-separator-ci -p 127.0.0.1:17860:7860 ghcr.io/hagerox/stem-separator-server:ci
           docker exec stem-separator-ci audio-separator --version
-          for attempt in {1..30}; do
+          for _attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:17860/healthz; then exit 0; fi
             sleep 2
           done
@@ -146,8 +162,8 @@ jobs:
           tags: |
             ghcr.io/hagerox/stem-separator-server:${{ github.ref_name }}
             ghcr.io/hagerox/stem-separator-server:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/hagerox/stem-separator-server:buildcache
+          cache-to: type=registry,ref=ghcr.io/hagerox/stem-separator-server:buildcache,mode=max,compression=zstd,oci-mediatypes=true,ignore-error=true
       - name: Attest container image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:

@@ -20,26 +20,26 @@ for command in curl git uv; do
 done
 
 mkdir -p "$BIN_ROOT"
+rm -f "$BIN_ROOT/uv" "$RESOURCE_ROOT/UV-LICENSE-APACHE.txt" "$RESOURCE_ROOT/UV-LICENSE-MIT.txt"
 curl --fail --location --retry 3 \
   "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/darwin-arm64.LICENSE" \
-  --output "$RESOURCE_ROOT/FFMPEG-LICENSE.txt"
+  --output "$RESOURCE_ROOT/FFMPEG-LICENSE.txt" &
+license_download_pid=$!
 curl --fail --location --retry 3 \
   "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/ffmpeg-darwin-arm64" \
-  --output "$BIN_ROOT/ffmpeg"
+  --output "$BIN_ROOT/ffmpeg" &
+ffmpeg_download_pid=$!
 curl --fail --location --retry 3 \
   "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/ffprobe-darwin-arm64" \
-  --output "$BIN_ROOT/ffprobe"
+  --output "$BIN_ROOT/ffprobe" &
+ffprobe_download_pid=$!
+wait "$license_download_pid"
+wait "$ffmpeg_download_pid"
+wait "$ffprobe_download_pid"
 echo "$FFMPEG_SHA256  $BIN_ROOT/ffmpeg" | shasum -a 256 --check
 echo "$FFPROBE_SHA256  $BIN_ROOT/ffprobe" | shasum -a 256 --check
-cp "$(command -v uv)" "$BIN_ROOT/uv"
-curl --fail --location --retry 3 \
-  "https://raw.githubusercontent.com/astral-sh/uv/main/LICENSE-APACHE" \
-  --output "$RESOURCE_ROOT/UV-LICENSE-APACHE.txt"
-curl --fail --location --retry 3 \
-  "https://raw.githubusercontent.com/astral-sh/uv/main/LICENSE-MIT" \
-  --output "$RESOURCE_ROOT/UV-LICENSE-MIT.txt"
-chmod 755 "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe" "$BIN_ROOT/uv"
-codesign --force --sign - "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe" "$BIN_ROOT/uv"
+chmod 755 "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe"
+codesign --force --sign - "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe"
 
 BUILD_ROOT="$(mktemp -d)"
 trap 'rm -rf "$BUILD_ROOT"' EXIT
@@ -81,6 +81,63 @@ uv venv --python "$PYTHON_ROOT/bin/python3.12" --relocatable "$RUNTIME_ROOT"
 uv pip install --python "$RUNTIME_ROOT/bin/python" \
   "$PAS_WHEEL" onnxruntime audioread "librosa<0.11"
 
+# Wheels commonly ship test suites and bytecode caches that are not needed by
+# the application. Keep runtime source, native libraries, metadata, and Torch
+# headers (TorchInductor may use those), while removing only reproducible
+# development/test payloads.
+SITE_PACKAGES="$RUNTIME_ROOT/lib/python3.12/site-packages"
+for package in numpy scipy sklearn sympy networkx numba onnx joblib; do
+  if [[ -d "$SITE_PACKAGES/$package" ]]; then
+    find "$SITE_PACKAGES/$package" -type d \( -name test -o -name tests \) -prune -exec rm -rf {} +
+  fi
+done
+rm -rf \
+  "$SITE_PACKAGES/Cython" \
+  "$SITE_PACKAGES/cython.py" \
+  "$SITE_PACKAGES/cython-"*.dist-info \
+  "$RUNTIME_ROOT/bin/cygdb" \
+  "$RUNTIME_ROOT/bin/cython" \
+  "$RUNTIME_ROOT/bin/cythonize" \
+  "$SITE_PACKAGES/torch/bin/protoc" \
+  "$SITE_PACKAGES/torch/bin/protoc-"*
+
+# The managed interpreter ships installation and Tk GUI tooling. The bundled
+# runtime is already provisioned and headless, so neither is used by the app.
+rm -rf \
+  "$PYTHON_ROOT/lib/python3.12/ensurepip" \
+  "$PYTHON_ROOT/lib/python3.12/idlelib" \
+  "$PYTHON_ROOT/lib/python3.12/tkinter" \
+  "$PYTHON_ROOT/lib/python3.12/turtledemo" \
+  "$PYTHON_ROOT/lib/python3.12/turtle.py" \
+  "$PYTHON_ROOT/lib/python3.12/site-packages/pip" \
+  "$PYTHON_ROOT/lib/python3.12/site-packages/pip-"*.dist-info \
+  "$PYTHON_ROOT/lib/libtcl9.0.dylib" \
+  "$PYTHON_ROOT/lib/libtcl9tk9.0.dylib" \
+  "$PYTHON_ROOT/lib/tcl9" \
+  "$PYTHON_ROOT/lib/tcl9.0" \
+  "$PYTHON_ROOT/lib/tk9.0"
+find "$RUNTIME_ROOT" "$PYTHON_ROOT" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$RUNTIME_ROOT" "$PYTHON_ROOT" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
+# A handful of large wheel binaries retain local symbol tables that are useful
+# for debugging but not for loading or calling their exported APIs. These files
+# account for nearly all available symbol savings; targeting them avoids
+# spending build time stripping hundreds of small extensions. Restore an
+# ad-hoc signature after each change so macOS can load it during the smoke test.
+STRIP_TARGETS=(
+  "$SITE_PACKAGES/torch/lib/libtorch_cpu.dylib"
+  "$SITE_PACKAGES/torch/lib/libtorch_python.dylib"
+  "$SITE_PACKAGES/llvmlite/binding/libllvmlite.dylib"
+  "$SITE_PACKAGES/onnxruntime/capi/onnxruntime_pybind11_state.so"
+  "$SITE_PACKAGES/onnxruntime/capi/"libonnxruntime.*.dylib
+  "$PYTHON_ROOT/lib/libpython3.12.dylib"
+)
+for binary in "${STRIP_TARGETS[@]}"; do
+  [[ -f "$binary" ]] || continue
+  strip -x "$binary" >/dev/null 2>&1
+  codesign --force --sign - "$binary" >/dev/null 2>&1
+done
+
 cat > "$BIN_ROOT/audio-separator" <<'WRAPPER'
 #!/bin/sh
 RESOURCE_BIN="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
@@ -88,9 +145,29 @@ RESOURCE_ROOT="$(dirname -- "$RESOURCE_BIN")"
 export PATH="$RESOURCE_BIN:$PATH"
 export VIRTUAL_ENV="$RESOURCE_ROOT/runtime"
 export PYTHONPATH="$RESOURCE_ROOT/runtime/lib/python3.12/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/Library/Caches}/Stem Separator"
+mkdir -p "$CACHE_ROOT/numba"
+export NUMBA_CACHE_DIR="$CACHE_ROOT/numba"
 exec "$RESOURCE_ROOT/python/bin/python3.12" "$RESOURCE_ROOT/runtime/bin/audio-separator" "$@"
 WRAPPER
 chmod 755 "$BIN_ROOT/audio-separator"
 "$BIN_ROOT/ffmpeg" -version >/dev/null
 "$BIN_ROOT/ffprobe" -version >/dev/null
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SITE_PACKAGES" "$PYTHON_ROOT/bin/python3.12" - <<'PY'
+import audio_separator
+import diffq
+import librosa
+import numba
+import numpy
+import onnx2torch
+import onnxruntime
+import scipy
+import torch
+import torchvision
+
+assert torch.backends.mps.is_built(), "The bundled PyTorch build has no Apple MPS support."
+assert "CPUExecutionProvider" in onnxruntime.get_available_providers()
+print(f"PyTorch {torch.__version__}; ONNX Runtime providers: {onnxruntime.get_available_providers()}")
+PY
 "$BIN_ROOT/audio-separator" --version

@@ -3,7 +3,16 @@ name: Build macOS app
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ["v*"]
+    paths:
+      - "src/**"
+      - "src-tauri/**"
+      - "catalog/**"
+      - "scripts/prepare-macos-resources.sh"
+      - "scripts/package-macos-dmg.sh"
+      - "package*.json"
+      - ".github/workflows/build-macos.yml"
   pull_request:
     paths:
       - "src/**"
@@ -38,11 +47,13 @@ jobs:
       - uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.10.11"
           enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
         run: npm ci
@@ -80,6 +91,7 @@ jobs:
           "$APP_PATH/Contents/Resources/bin/audio-separator" --version
 
       - name: Stage build artifacts
+        if: github.ref != 'refs/heads/main'
         run: |
           mkdir -p artifacts
           APP_PATH="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
@@ -108,11 +120,13 @@ jobs:
           rm artifacts/Stem-Separator-macOS-update.tar.gz.sig
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: github.ref != 'refs/heads/main'
         with:
           name: stem-separator-macos-arm64-unsigned
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -139,7 +153,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for attempt in {1..20}; do
+          for _attempt in {1..20}; do
             gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null && break
             sleep 3
           done

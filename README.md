@@ -61,6 +61,8 @@ The recommended, isolated installation is Docker. Install Docker with WSL integr
 docker compose -f server/compose.yaml up --build
 ```
 
+Only the Windows/host NVIDIA driver and NVIDIA Container Toolkit are required; do not install a separate CUDA toolkit in WSL. The image carries its pinned CUDA 12.8, cuDNN, PyTorch, and ONNX Runtime user-space libraries. Use a current production NVIDIA driver; the CUDA 12.8 base image supports compatible maintained branches starting at 535.
+
 Open `http://localhost:7860`. The Compose service binds only to Windows/WSL localhost, mounts persistent job and model caches, and requests all NVIDIA GPUs.
 
 For a native WSL install instead:

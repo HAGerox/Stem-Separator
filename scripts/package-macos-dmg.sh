@@ -29,9 +29,8 @@ ln -s /Applications "$STAGING_ROOT/Applications"
 hdiutil create \
   -volname "Stem Separator" \
   -srcfolder "$STAGING_ROOT" \
-  -format UDZO \
+  -format ULFO \
   -ov \
   "$OUTPUT_DMG"
 
 echo "$OUTPUT_DMG"
-
