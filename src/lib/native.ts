@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type {
   EnvironmentStatus,
@@ -51,9 +52,14 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
   return invoke<UpdateInfo>("check_for_update");
 }
 
-export async function installUpdate(): Promise<void> {
+export async function installUpdate(onProgress?: (progress: number) => void): Promise<void> {
   if (!inTauri) return;
-  await invoke("install_update");
+  const unlisten = await listen<number>("update-progress", (event) => onProgress?.(event.payload));
+  try {
+    await invoke("install_update");
+  } finally {
+    unlisten();
+  }
 }
 
 export async function revealPath(path: string): Promise<void> {

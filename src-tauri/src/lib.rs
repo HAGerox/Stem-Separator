@@ -395,8 +395,30 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     else {
         return Ok(());
     };
+    let _ = app.emit("update-progress", 0_u8);
+    let progress_app = app.clone();
+    let finished_app = app.clone();
+    let mut downloaded_bytes = 0_u64;
+    let mut last_progress = 0_u8;
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk_length, content_length| {
+                downloaded_bytes = downloaded_bytes.saturating_add(chunk_length as u64);
+                let Some(total_bytes) = content_length.filter(|total| *total > 0) else {
+                    return;
+                };
+                let progress = ((downloaded_bytes as f64 / total_bytes as f64) * 100.0)
+                    .floor()
+                    .clamp(0.0, 99.0) as u8;
+                if progress > last_progress {
+                    last_progress = progress;
+                    let _ = progress_app.emit("update-progress", progress);
+                }
+            },
+            move || {
+                let _ = finished_app.emit("update-progress", 100_u8);
+            },
+        )
         .await
         .map_err(|error| format!("Could not install the update: {error}"))?;
     app.restart();

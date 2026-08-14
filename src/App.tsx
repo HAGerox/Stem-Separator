@@ -141,7 +141,7 @@ function useSmoothedProgress(progress: JobProgress) {
   return displayed;
 }
 
-function Header({ update, updating, onUpdate }: { update: UpdateInfo | null; updating: boolean; onUpdate: () => void }) {
+function Header({ update, updating, updateProgress, onUpdate }: { update: UpdateInfo | null; updating: boolean; updateProgress: number | null; onUpdate: () => void }) {
   const startDragging = async (event: React.MouseEvent<HTMLElement>) => {
     if (!inTauri || event.button !== 0) return;
     const target = event.target as HTMLElement;
@@ -155,7 +155,7 @@ function Header({ update, updating, onUpdate }: { update: UpdateInfo | null; upd
       <div className="header-drag-space" data-tauri-drag-region />
       {update?.available && <button className="update-button" disabled={updating} onClick={onUpdate} title={update.notes || `Install Stem Separator ${update.version}`}>
         {updating ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
-        {updating ? "Updating…" : `Update ${update.version}`}
+        {updating ? updateProgress == null ? "Updating…" : `Downloading ${updateProgress}%` : `Update ${update.version}`}
       </button>}
     </header>
   );
@@ -673,6 +673,7 @@ export default function App() {
   const [stopping, setStopping] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [uploadStatus, setUploadStatus] = useState<ServerUploadSnapshot | null>(null);
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
@@ -939,9 +940,10 @@ export default function App() {
 
   const applyUpdate = async () => {
     setUpdating(true);
+    setUpdateProgress(0);
     setError(null);
-    try { await installUpdate(); }
-    catch (reason) { setError(String(reason)); setUpdating(false); }
+    try { await installUpdate(setUpdateProgress); }
+    catch (reason) { setError(String(reason)); setUpdating(false); setUpdateProgress(null); }
   };
 
   return (
@@ -961,7 +963,7 @@ export default function App() {
         if (resolved.length) { setFiles((current) => [...current, ...resolved]); setView("select"); }
       } : undefined}
     >
-      <Header update={update} updating={updating} onUpdate={applyUpdate} />
+      <Header update={update} updating={updating} updateProgress={updateProgress} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
       {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} uploadStatus={uploadStatus} />}
       {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}
