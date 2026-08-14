@@ -304,21 +304,24 @@ function SelectView({
 
           <button className={`multitrack-option ${multiTrack ? "selected" : ""}`} aria-pressed={multiTrack} onClick={chooseMultiTrack}>
             <span className="multitrack-option-icon"><StemGlyph type="multi" /></span>
-            <strong>Multi-Track</strong>
+            <span className="multitrack-option-copy">
+              <strong>Multi-Track</strong>
+              <small>All parts add back up to the original.</small>
+            </span>
           </button>
 
           <h2>Individual stems</h2>
           <div className="stem-grid">
             {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
           </div>
-
-          <footer className="picker-footer">
-            <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
-              {multiTrack ? "Create Multi-Track" : `Separate ${selected.length || ""} ${selected.length === 1 ? "stem" : "stems"}`}
-            </button>
-          </footer>
         </section>
       </div>
+
+      <footer className="selection-action-bar">
+        <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
+          {multiTrack ? "Create Multi-Track" : `Separate ${selected.length || ""} ${selected.length === 1 ? "stem" : "stems"}`}
+        </button>
+      </footer>
     </main>
   );
 }
