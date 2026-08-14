@@ -15,6 +15,12 @@ def load_app(tmp_path, monkeypatch):
 def freeze_registry(server_app, monkeypatch):
     monkeypatch.setattr(server_app.REGISTRY, "refresh", lambda force=False: False)
 
+    async def fake_artifacts(job, model, model_index, model_count):
+        server_app.MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+        (server_app.MODEL_ROOT / model.filename).write_bytes(b"test-model")
+
+    monkeypatch.setattr(server_app, "ensure_model_artifacts", fake_artifacts)
+
 
 def test_health_and_environment(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
@@ -138,12 +144,80 @@ def test_registry_builds_capability_aware_plan(tmp_path, monkeypatch):
     freeze_registry(server_app, monkeypatch)
     plan = server_app.REGISTRY.plan(["vocals", "instrumental"])
     assert [model.filename for model in plan] == [
-        "bs_roformer_vocals_resurrection_unwa.ckpt",
+        "becruily_deux.ckpt",
         "mel_band_roformer_instrumental_fv7z_gabox.ckpt",
     ]
+    assert plan[0].artifacts[0].name == "becruily_deux.ckpt"
     payload = server_app.REGISTRY.payload()
     assert payload["catalog"]["schemaVersion"] == 1
-    assert payload["catalog"]["recommendations"]["vocals"] == "resurrection-vocals"
+    assert payload["catalog"]["recommendations"]["vocals"] == "becruily-deux"
+
+
+def test_registry_accepts_verified_direct_model_artifacts(tmp_path):
+    from stem_separator_server.model_registry import ModelRegistry
+
+    digest = "a" * 64
+    converted = ModelRegistry._convert({
+        "schema": 3,
+        "generated_at": "2026-08-14",
+        "models": [{
+            "id": "becruily-deux",
+            "name": "Becruily Deux",
+            "status": "current",
+            "tasks": ["vocals", "instrumental"],
+            "availability": {
+                "state": "public_weights",
+                "license": "CC-BY-NC-4.0",
+                "artifacts": [
+                    {"name": "becruily_deux.ckpt", "url": "https://example.test/model", "sha256": digest},
+                    {"name": "config_deux_becruily.yaml", "url": "https://example.test/config", "sha256": digest},
+                ],
+            },
+            "backends": {"audio_separator": {"state": "not_listed"}},
+        }],
+        "recommendations": {"vocals": {"model": "becruily-deux", "alternatives": []}},
+    })
+    assert converted["recommendations"]["vocals"] == "becruily-deux"
+    assert converted["models"]["becruily-deux"]["filename"] == "becruily_deux.ckpt"
+    assert len(converted["models"]["becruily-deux"]["artifacts"]) == 2
+
+
+def test_background_upload_can_be_promoted_to_a_job(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    from fastapi.testclient import TestClient
+
+    async def fake_command(command, job, progress_range=None, **kwargs):
+        output_dir = server_app.Path(command[command.index("--output_dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "track_(Vocals)_model.wav").write_bytes(b"RIFFvocals")
+
+    monkeypatch.setattr(server_app, "run_command", fake_command)
+    with TestClient(server_app.app) as client:
+        created = client.post("/api/uploads")
+        assert created.status_code == 201
+        upload_id = created.json()["id"]
+        uploaded = client.post(
+            f"/api/uploads/{upload_id}",
+            files={"file": ("track.wav", b"RIFFinput", "audio/wav")},
+        )
+        assert uploaded.status_code == 200
+        assert uploaded.json()["status"] == "complete"
+        response = client.post(
+            "/api/jobs",
+            data={"upload_id": upload_id, "stems": "vocals"},
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in {"complete", "failed"}:
+                break
+            import time
+
+            time.sleep(0.01)
+    assert job["status"] == "complete", job
+    assert not (server_app.UPLOADS_ROOT / upload_id).exists()
 
 
 def test_multitrack_is_an_explicit_special_case(tmp_path, monkeypatch):

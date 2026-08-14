@@ -24,10 +24,24 @@ FALLBACK = {
     "generatedAt": "2026-08-13",
     "source": "bundled fallback",
     "models": {
-        "resurrection-vocals": {
-            "name": "BS RoFormer Resurrection Vocals",
-            "filename": "bs_roformer_vocals_resurrection_unwa.ckpt",
-            "stems": ["vocals"],
+        "becruily-deux": {
+            "name": "Becruily Deux",
+            "filename": "becruily_deux.ckpt",
+            "stems": ["vocals", "instrumental"],
+            "license": "CC-BY-NC-4.0",
+            "status": "current",
+            "artifacts": [
+                {
+                    "name": "becruily_deux.ckpt",
+                    "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/becruily_deux.ckpt",
+                    "sha256": "10255c02295bf3e3865d4ee50ff752d7b19b124ed5fd93b147babc4333eda3aa",
+                },
+                {
+                    "name": "config_deux_becruily.yaml",
+                    "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/config_deux_becruily.yaml",
+                    "sha256": "bb3ea9bce37ca96d63568490d5a92d7e41df3d7726788b6970c10d89eb62d902",
+                },
+            ],
         },
         "gabox-fv7z": {
             "name": "MelBand RoFormer Inst Gabox Fv7z",
@@ -51,7 +65,7 @@ FALLBACK = {
         },
     },
     "recommendations": {
-        "vocals": "resurrection-vocals",
+        "vocals": "becruily-deux",
         "instrumental": "gabox-fv7z",
         "drums": "bs-roformer-sw",
         "bass": "bs-roformer-sw",
@@ -70,11 +84,19 @@ FALLBACK = {
 
 
 @dataclass(frozen=True)
+class ModelArtifact:
+    name: str
+    url: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class ModelChoice:
     id: str
     name: str
     filename: str
     stems: tuple[str, ...]
+    artifacts: tuple[ModelArtifact, ...] = ()
 
 
 class ModelRegistry:
@@ -100,12 +122,46 @@ class ModelRegistry:
             self.catalog = FALLBACK
 
     @staticmethod
-    def _compatible(model: dict) -> bool:
+    def _artifacts(model: dict) -> list[dict]:
+        return [
+            artifact
+            for artifact in model.get("availability", {}).get("artifacts", [])
+            if isinstance(artifact, dict)
+            and isinstance(artifact.get("name"), str)
+            and bool(artifact["name"])
+            and isinstance(artifact.get("url"), str)
+            and artifact["url"].startswith("https://")
+            and isinstance(artifact.get("sha256"), str)
+            and len(artifact["sha256"]) == 64
+            and all(character in "0123456789abcdefABCDEF" for character in artifact["sha256"])
+        ]
+
+    @classmethod
+    def _direct_filename(cls, model: dict) -> str | None:
+        return next(
+            (
+                artifact["name"]
+                for artifact in cls._artifacts(model)
+                if Path(artifact["name"]).suffix.lower() in {".ckpt", ".pth", ".onnx", ".th"}
+            ),
+            None,
+        )
+
+    @classmethod
+    def _compatible(cls, model: dict) -> bool:
         backend = model.get("backends", {}).get("audio_separator", {})
+        direct_filename = cls._direct_filename(model)
+        has_config = any(Path(artifact["name"]).suffix.lower() in {".yaml", ".yml"} for artifact in cls._artifacts(model))
         return (
             model.get("availability", {}).get("state") == "public_weights"
-            and backend.get("state") == "listed"
-            and isinstance(backend.get("model_filename"), str)
+            and (
+                (
+                    backend.get("state") == "listed"
+                    and isinstance(backend.get("model_filename"), str)
+                    and bool(backend["model_filename"])
+                )
+                or (direct_filename is not None and has_config)
+            )
         )
 
     @classmethod
@@ -124,16 +180,20 @@ class ModelRegistry:
             )
             if not selected:
                 continue
-            backend = selected["backends"]["audio_separator"]
+            backend = selected.get("backends", {}).get("audio_separator", {})
+            filename = cls._direct_filename(selected) or backend.get("model_filename")
+            if not filename:
+                continue
             stems = [stem for stem in selected.get("tasks", []) if stem in APP_STEMS]
             if not stems:
                 continue
             models[selected["id"]] = {
                 "name": selected["name"],
-                "filename": backend["model_filename"],
+                "filename": filename,
                 "stems": stems,
                 "license": selected.get("availability", {}).get("license", "unknown"),
                 "status": selected.get("status", "unknown"),
+                "artifacts": cls._artifacts(selected),
             }
             recommendations[task] = selected["id"]
         if not models:
@@ -183,21 +243,26 @@ class ModelRegistry:
         if task and task in recommendation_ids:
             model_id = recommendation_ids[task]
             model = models[model_id]
-            return [ModelChoice(model_id, model["name"], model["filename"], tuple(selected))]
+            artifacts = tuple(ModelArtifact(**artifact) for artifact in model.get("artifacts", []))
+            return [ModelChoice(model_id, model["name"], model["filename"], tuple(selected), artifacts)]
 
-        uncovered = set(selected)
         result: list[ModelChoice] = []
-        while uncovered:
-            stem = next(value for value in selected if value in uncovered)
+        result_index: dict[str, int] = {}
+        for stem in selected:
             model_id = recommendation_ids.get(stem)
             if not model_id or model_id not in models:
                 raise ValueError(f"No compatible recommended model is available for {stem}.")
             model = models[model_id]
-            covered = tuple(value for value in model["stems"] if value in uncovered)
-            if not covered:
+            if stem not in model["stems"]:
                 raise ValueError(f"The recommended model for {stem} does not expose that stem.")
-            result.append(ModelChoice(model_id, model["name"], model["filename"], covered))
-            uncovered.difference_update(covered)
+            if model_id in result_index:
+                index = result_index[model_id]
+                current = result[index]
+                result[index] = ModelChoice(current.id, current.name, current.filename, (*current.stems, stem), current.artifacts)
+                continue
+            artifacts = tuple(ModelArtifact(**artifact) for artifact in model.get("artifacts", []))
+            result_index[model_id] = len(result)
+            result.append(ModelChoice(model_id, model["name"], model["filename"], (stem,), artifacts))
         return result
 
     def payload(self) -> dict:
@@ -215,6 +280,7 @@ class ModelRegistry:
                 "source": self.catalog["source"],
                 "license": model.get("license"),
                 "status": model.get("status"),
+                "artifacts": model.get("artifacts", []),
             }
             for model_id, model in self.catalog["models"].items()
         ]

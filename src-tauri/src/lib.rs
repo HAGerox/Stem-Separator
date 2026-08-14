@@ -805,13 +805,26 @@ async fn ensure_model_artifacts(
 }
 
 fn model_artifacts_ready(run: &ModelRun, model_dir: &Path) -> bool {
-    !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
+    let artifacts_ready = !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
         let Ok(name) = safe_artifact_name(&artifact.name) else { return false; };
         let path = model_dir.join(name);
         path.is_file()
             && sha256_file(&path)
                 .is_ok_and(|actual| actual.eq_ignore_ascii_case(&artifact.sha256))
-    })
+    });
+    if !artifacts_ready {
+        return false;
+    }
+    let has_config = run.artifacts.iter().any(|artifact| {
+        matches!(Path::new(&artifact.name).extension().and_then(|value| value.to_str()), Some("yaml" | "yml"))
+    });
+    if !has_config {
+        return true;
+    }
+    Path::new(&run.model_filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1291,7 +1304,7 @@ async fn process_job(
                 overall: 1.0,
                 file_index: 0,
                 file_count,
-                stage: format!("Preparing {}", run.model_name),
+                stage: format!("Downloading {}", run.model_name),
                 detail: "Downloading and verifying registry model files".into(),
                 model_name: Some(run.model_name.clone()),
                 model_index: Some(index + 1),

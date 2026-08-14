@@ -61,7 +61,7 @@ export interface ModelRun {
   artifacts?: ModelArtifact[];
 }
 
-export type JobPhase = "prepare" | "download" | "separate" | "finish" | "complete";
+export type JobPhase = "upload" | "prepare" | "download" | "separate" | "finish" | "complete";
 
 export interface JobProgress {
   jobId: string;

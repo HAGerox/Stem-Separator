@@ -28,7 +28,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { availableStems, buildModelPlan, loadCatalog } from "./lib/catalog";
 import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, resolveInputs, revealPath } from "./lib/native";
-import { cancelServerJob, processServerJob } from "./lib/server";
+import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
+import type { ServerUploadHandle, ServerUploadSnapshot } from "./lib/server";
 import { serverMode } from "./lib/runtime";
 import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
 
@@ -263,6 +264,7 @@ function SelectView({
   onBack,
   catalog,
   dragging,
+  uploadStatus,
 }: {
   files: InputFile[];
   selected: StemId[];
@@ -275,6 +277,7 @@ function SelectView({
   onBack: () => void;
   catalog: Catalog | null;
   dragging: boolean;
+  uploadStatus?: ServerUploadSnapshot | null;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
@@ -359,7 +362,22 @@ function SelectView({
       </section>
 
       <section className="selection-footer">
-        {!multiTrack && plan.length > 1 ? (
+        {uploadStatus?.state === "uploading" ? (
+          <div className="smart-plan upload-plan">
+            <LoaderCircle className="spin" size={12} />
+            <span><strong>Uploading in the background</strong> · {Math.round(uploadStatus.progress)}%</span>
+          </div>
+        ) : uploadStatus?.state === "complete" ? (
+          <div className="smart-plan upload-plan ready">
+            <CircleCheck size={12} />
+            <span><strong>Files ready on this server</strong></span>
+          </div>
+        ) : uploadStatus?.state === "failed" ? (
+          <div className="smart-plan upload-plan failed">
+            <CircleAlert size={12} />
+            <span><strong>Upload will retry when you start</strong></span>
+          </div>
+        ) : !multiTrack && plan.length > 1 ? (
           <div className="smart-plan">
             <span className="plan-bullet" />
             <span><strong>Best model chosen for each stem</strong> · {plan.length} passes</span>
@@ -388,7 +406,12 @@ function ProcessingView({
   const presentedProgress = usePresentedProgress(progress);
   const needsVideoPreparation = files.some((file) => file.isVideo);
   const needsAlignment = files.some((file) => file.extension !== "wav");
+  const [sawUpload, setSawUpload] = useState(progress.phase === "upload");
   const [downloads, setDownloads] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (presentedProgress.phase === "upload") setSawUpload(true);
+  }, [presentedProgress.phase]);
 
   useEffect(() => {
     if (presentedProgress.phase !== "download" || !presentedProgress.modelIndex) return;
@@ -398,10 +421,18 @@ function ProcessingView({
   const visibleDownloads = presentedProgress.phase === "download" && presentedProgress.modelIndex && !downloads.includes(presentedProgress.modelIndex)
     ? [...downloads, presentedProgress.modelIndex]
     : downloads;
+  const includesUpload = sawUpload || presentedProgress.phase === "upload";
   const stages = useMemo(() => [
+    ...(includesUpload ? [{
+      id: "upload",
+      label: "Uploading files",
+      detail: files.length === 1 ? `Sending ${files[0].name} to this server` : `Sending ${files.length} files to this server`,
+      phase: "upload" as const,
+      modelIndex: 0,
+    }] : []),
     ...visibleDownloads.map((modelIndex) => ({
       id: `download-${modelIndex}`,
-      label: "Downloading model",
+      label: `Downloading ${plan[modelIndex - 1]?.modelName || "separation model"}`,
       detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · for ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "this separation"}`,
       phase: "download" as const,
       modelIndex,
@@ -416,7 +447,7 @@ function ProcessingView({
     ...plan.map((run, index) => ({
       id: `separate-${index + 1}`,
       label: `Separating ${run.stems.map(stemLabel).join(" + ")}`,
-      detail: `${run.modelName} · running locally`,
+      detail: `${run.modelName} · ${serverMode ? "running on this server" : "running locally"}`,
       phase: "separate" as const,
       modelIndex: index + 1,
     })),
@@ -427,12 +458,14 @@ function ProcessingView({
       phase: "finish" as const,
       modelIndex: plan.length,
     },
-  ], [needsAlignment, needsVideoPreparation, plan, visibleDownloads]);
-  const phase = presentedProgress.phase || (presentedProgress.stage.startsWith("Preparing ") || presentedProgress.stage.startsWith("Downloading ") ? "download" : presentedProgress.overall >= 98 || presentedProgress.stage === "Finishing up" || presentedProgress.stage.startsWith("Creating ") ? "finish" : "separate");
-  const activeId = phase === "download"
+  ], [files, includesUpload, needsAlignment, needsVideoPreparation, plan, visibleDownloads]);
+  const phase = presentedProgress.phase || (presentedProgress.stage.startsWith("Uploading ") ? "upload" : presentedProgress.stage.startsWith("Downloading ") ? "download" : presentedProgress.stage === "Preparing video" ? "prepare" : presentedProgress.overall >= 98 || presentedProgress.stage === "Finishing up" || presentedProgress.stage.startsWith("Creating ") ? "finish" : "separate");
+  const activeId = phase === "upload"
+    ? "upload"
+    : phase === "download"
     ? `download-${presentedProgress.modelIndex || 1}`
     : phase === "prepare"
-      ? "prepare"
+      ? needsVideoPreparation ? "prepare" : "separate-1"
     : phase === "finish" || phase === "complete"
       ? "finish"
       : `separate-${presentedProgress.modelIndex || 1}`;
@@ -440,7 +473,7 @@ function ProcessingView({
   const [shownActiveId, setShownActiveId] = useState(activeId);
   useEffect(() => {
     if (shownActiveId === activeId) return;
-    if (phase === "download") {
+    if (phase === "upload" || phase === "download") {
       setShownActiveId(activeId);
       return;
     }
@@ -451,20 +484,9 @@ function ProcessingView({
   const visibleStart = shownActiveIndex;
   const visibleStages = stages.slice(visibleStart, shownActiveIndex + 4);
   const activeStage = stages[activeIndex];
-  const activeHeadline = phase === "download"
-    ? `Downloading ${plan[(presentedProgress.modelIndex || 1) - 1]?.modelName || "separation model"}`
-    : phase === "prepare"
-      ? "Preparing video"
-    : phase === "finish"
-      ? presentedProgress.stage || "Finishing up"
-      : activeStage?.label || presentedProgress.stage || "Preparing separation";
-  const activeDetail = phase === "download"
-    ? presentedProgress.detail || "Downloading the files needed for this separation"
-    : phase === "prepare"
-      ? presentedProgress.detail || "Extracting the soundtrack for separation"
-    : phase === "finish"
-      ? presentedProgress.detail || activeStage?.detail
-      : activeStage?.detail || presentedProgress.detail;
+  const activeHeadline = presentedProgress.stage || activeStage?.label || "Preparing separation";
+  const activeDetail = presentedProgress.detail || activeStage?.detail || "Preparing the next step";
+  const displayedPercent = phase === "complete" ? 100 : Math.max(1, Math.round(displayedProgress));
   return (
     <main className="processing-view content-shell">
       <section className="processing-card">
@@ -478,8 +500,8 @@ function ProcessingView({
 
         <div className="processing-overall">
         <div className="processing-topline">
-          <span>Separating {files.length === 1 ? files[0].name : `${files.length} files`}</span>
-          <strong>{Math.round(displayedProgress)}%</strong>
+          <span>{phase === "upload" ? "Uploading" : "Separating"} {files.length === 1 ? files[0].name : `${files.length} files`}</span>
+          <strong>{displayedPercent}%</strong>
         </div>
         <div className="main-progress"><span style={{ width: `${Math.max(1, displayedProgress)}%` }} /></div>
         </div>
@@ -490,12 +512,14 @@ function ProcessingView({
             const done = index < activeIndex || phase === "complete";
             const active = index === activeIndex && phase !== "complete";
             const phaseProgress = active ? Math.min(100, Math.max(0, presentedProgress.phaseProgress ?? (stage.phase === "separate" ? presentedProgress.overall : 4))) : done ? 100 : 0;
+            const label = active ? activeHeadline : stage.label;
+            const detail = active ? activeDetail : stage.detail;
             return (
               <div className={`stage-row ${done ? "done leaving" : ""} ${active ? "active" : ""} future-${Math.max(0, index - activeIndex)}`} key={stage.id}>
                 <StageProgress progress={phaseProgress} active={active} done={done} />
                 <div className="stage-copy">
-                  <div className="stage-title"><strong>{stage.label}</strong><span>{done ? "Done" : active ? `${Math.round(phaseProgress)}%` : "Waiting"}</span></div>
-                  <small>{stage.detail}</small>
+                  <div className="stage-title"><strong>{label}</strong><span>{done ? "Done" : active ? `${Math.round(phaseProgress)}%` : "Waiting"}</span></div>
+                  <small>{detail}</small>
                 </div>
               </div>
             );
@@ -649,15 +673,52 @@ export default function App() {
   const [stopping, setStopping] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<ServerUploadSnapshot | null>(null);
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
   const starting = useRef(false);
   const browserFiles = useRef(new Map<string, File>());
+  const uploadHandle = useRef<ServerUploadHandle | null>(null);
+  const activeServerJobId = useRef<string | null>(null);
+  const uploadKey = useRef<string | null>(null);
+  const uploadGeneration = useRef(0);
+  const filesRef = useRef<InputFile[]>(files);
   const viewRef = useRef<View>(view);
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected, multiTrack) : [], [catalog, multiTrack, selected]);
 
+  filesRef.current = files;
   useEffect(() => { viewRef.current = view; }, [view]);
+
+  const beginBackgroundUpload = useCallback(() => {
+    if (!serverMode || demoMode || filesRef.current.length === 0) return null;
+    const inputs = filesRef.current;
+    const uploads = inputs.map((file) => browserFiles.current.get(file.path)).filter((file): file is File => !!file);
+    if (uploads.length !== inputs.length) return null;
+    const generation = ++uploadGeneration.current;
+    void uploadHandle.current?.cancel();
+    setUploadStatus({ state: "uploading", progress: 0, uploadedBytes: 0, totalBytes: uploads.reduce((total, file) => total + file.size, 0) });
+    const handle = startServerUpload(uploads, (snapshot) => {
+      if (uploadGeneration.current !== generation) return;
+      setUploadStatus(snapshot);
+      if (starting.current && viewRef.current === "processing" && snapshot.state === "uploading") {
+        setProgress({
+          jobId: "uploading",
+          overall: 1 + 4 * snapshot.progress / 100,
+          fileIndex: 0,
+          fileCount: inputs.length,
+          stage: "Uploading files",
+          detail: inputs.length === 1 ? `Sending ${inputs[0].name} to this server` : `Sending ${inputs.length} files to this server`,
+          phase: "upload",
+          phaseProgress: snapshot.progress,
+        });
+      }
+    });
+    uploadHandle.current = handle;
+    uploadKey.current = inputs.map((file) => file.path).join("\u0000");
+    void handle.ready.catch(() => undefined);
+    return handle;
+  }, [demoMode]);
 
   useEffect(() => {
     loadCatalog().then(({ catalog: nextCatalog }) => { setCatalog(nextCatalog); });
@@ -680,9 +741,25 @@ export default function App() {
     });
   }, [catalog]);
 
+  useEffect(() => {
+    if (!serverMode || demoMode || view !== "select") return;
+    if (files.length === 0) {
+      void uploadHandle.current?.cancel();
+      uploadHandle.current = null;
+      uploadKey.current = null;
+      setUploadStatus(null);
+      return;
+    }
+    const key = files.map((file) => file.path).join("\u0000");
+    const snapshot = uploadHandle.current?.snapshot();
+    if (uploadKey.current === key && snapshot && snapshot.state !== "failed" && snapshot.state !== "cancelled") return;
+    beginBackgroundUpload();
+  }, [beginBackgroundUpload, demoMode, files, view]);
+
   useEffect(() => () => {
     if (previewTimer.current) window.clearInterval(previewTimer.current);
     if (previewCompletion.current) window.clearTimeout(previewCompletion.current);
+    void uploadHandle.current?.cancel();
   }, []);
 
   const addPaths = useCallback(async (paths: string[]) => {
@@ -746,24 +823,37 @@ export default function App() {
     setView("processing");
     setError(null);
     const startsWithVideo = files.some((file) => file.isVideo);
+    let serverUpload = uploadHandle.current;
+    if (serverMode && !demoMode && (!serverUpload || ["failed", "cancelled"].includes(serverUpload.snapshot().state))) {
+      serverUpload = beginBackgroundUpload();
+    }
+    const uploadPending = !!serverUpload && serverUpload.snapshot().state !== "complete";
     setProgress({
-      jobId: "starting",
-      overall: 1,
+      jobId: uploadPending ? "uploading" : "starting",
+      overall: uploadPending ? 1 + 4 * serverUpload!.snapshot().progress / 100 : 1,
       fileIndex: 0,
       fileCount: files.length,
-      stage: startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
-      detail: startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
-      modelIndex: startsWithVideo ? undefined : 1,
+      stage: uploadPending ? "Uploading files" : serverMode ? "Starting separation" : startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
+      detail: uploadPending
+        ? files.length === 1 ? `Sending ${files[0].name} to this server` : `Sending ${files.length} files to this server`
+        : serverMode ? "The files are ready on this server" : startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
+      modelIndex: uploadPending || startsWithVideo ? undefined : 1,
       modelCount: plan.length,
-      phase: startsWithVideo ? "prepare" : "separate",
-      phaseProgress: 1,
+      phase: uploadPending ? "upload" : startsWithVideo ? "prepare" : "separate",
+      phaseProgress: uploadPending ? serverUpload!.snapshot().progress : 1,
     });
 
     if (serverMode && !demoMode) {
       try {
-        const uploads = files.map((file) => browserFiles.current.get(file.path)).filter((file): file is File => !!file);
-        if (uploads.length !== files.length) throw new Error("One or more selected files are no longer available. Add them again and retry.");
-        const nextResult = await processServerJob(uploads, selected, multiTrack, setProgress);
+        if (!serverUpload) throw new Error("One or more selected files are no longer available. Add them again and retry.");
+        const activeUpload = serverUpload;
+        const nextResult = await processServerJob(activeUpload, selected, multiTrack, setProgress, uploadPending ? 5 : 0, (jobId) => {
+          activeServerJobId.current = jobId;
+          if (uploadHandle.current === activeUpload) {
+            uploadHandle.current = null;
+            uploadKey.current = null;
+          }
+        });
         if (!cancelled.current) { setResult(nextResult); setView("results"); }
       } catch (reason) {
         if (!cancelled.current && !(reason instanceof DOMException && reason.name === "AbortError")) {
@@ -812,14 +902,23 @@ export default function App() {
     if (previewTimer.current) window.clearInterval(previewTimer.current);
     if (previewCompletion.current) window.clearTimeout(previewCompletion.current);
     try {
-      if (serverMode) await cancelServerJob(progress.jobId);
+      if (serverMode) {
+        await uploadHandle.current?.cancel();
+        await cancelServerJob(activeServerJobId.current || progress.jobId);
+      }
       else await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId);
     }
     catch (reason) { setError(String(reason)); }
-    finally { starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
+    finally { activeServerJobId.current = null; starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
   };
 
   const reset = () => {
+    uploadGeneration.current += 1;
+    void uploadHandle.current?.cancel();
+    uploadHandle.current = null;
+    activeServerJobId.current = null;
+    uploadKey.current = null;
+    setUploadStatus(null);
     for (const path of browserFiles.current.keys()) URL.revokeObjectURL(path);
     browserFiles.current.clear();
     setFiles([]); setResult(null); setSelected(["vocals"]); setMultiTrack(false); setView("drop");
@@ -864,7 +963,7 @@ export default function App() {
     >
       <Header update={update} updating={updating} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
-      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} />}
+      {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} uploadStatus={uploadStatus} />}
       {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} onStop={() => setConfirmStop(true)} />}
       {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}

@@ -181,6 +181,10 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .selection-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid var(--line); padding-top: 19px; margin-top: auto; }
 .smart-plan { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; min-width: 0; }
 .smart-plan strong { color: var(--ink); }
+.upload-plan.ready { color: var(--green); }
+.upload-plan.ready strong { color: var(--green); }
+.upload-plan.failed { color: var(--danger); }
+.upload-plan.failed strong { color: var(--danger); }
 .plan-bullet { width: 5px; height: 5px; border-radius: 50%; background: var(--soft); flex: 0 0 auto; }
 .start-button { min-width: 164px; }
 

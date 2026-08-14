@@ -1,31 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import time
+import urllib.request
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .model_registry import ModelRegistry
+from .model_registry import ModelArtifact, ModelChoice, ModelRegistry
 from .updater import latest_release, running_in_container
 
 APP_ROOT = Path(__file__).resolve().parent
 WEB_ROOT = APP_ROOT / "web"
 DATA_ROOT = Path(os.getenv("STEM_SEPARATOR_DATA_DIR", Path.home() / ".local/share/stem-separator-server"))
 JOBS_ROOT = DATA_ROOT / "jobs"
+UPLOADS_ROOT = DATA_ROOT / "uploads"
 MODEL_ROOT = Path(os.getenv("STEM_SEPARATOR_MODEL_DIR", DATA_ROOT / "models"))
 SEPARATOR_BIN = os.getenv("AUDIO_SEPARATOR_BIN", "audio-separator")
 MAX_UPLOAD_BYTES = int(os.getenv("STEM_SEPARATOR_MAX_UPLOAD_BYTES", str(8 * 1024**3)))
@@ -44,13 +47,13 @@ class Job:
     stems: list[str]
     multi_track: bool = False
     status: Literal["queued", "running", "complete", "failed", "cancelled"] = "queued"
-    stage: str = "Waiting for the GPU"
-    detail: str = "The upload is ready to process."
+    stage: str = "Waiting for processing"
+    detail: str = "The files are ready on this server."
     progress: float = 0.0
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
-    phase: Literal["prepare", "download", "separate", "finish", "complete"] = "prepare"
+    phase: Literal["prepare", "download", "separate", "finish", "complete"] = "separate"
     phase_progress: float = 0.0
     model_name: str | None = None
     model_index: int | None = None
@@ -62,13 +65,23 @@ class Job:
     process: asyncio.subprocess.Process | None = field(default=None, repr=False)
 
 
+@dataclass
+class UploadSession:
+    id: str
+    status: Literal["waiting", "complete", "cancelled"] = "waiting"
+    filenames: list[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+
+
 JOBS: dict[str, Job] = {}
+UPLOADS: dict[str, UploadSession] = {}
 GPU_QUEUE = asyncio.Lock()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     JOBS_ROOT.mkdir(parents=True, exist_ok=True)
+    UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(REGISTRY.refresh)
     yield
@@ -144,6 +157,109 @@ async def write_upload(upload: UploadFile, target: Path) -> None:
                 raise HTTPException(status_code=413, detail="Upload exceeds the configured size limit.")
             output.write(chunk)
     await upload.close()
+
+
+def upload_filenames(files: list[UploadFile]) -> list[str]:
+    filenames: list[str] = []
+    seen: set[str] = set()
+    for upload in files:
+        filename = safe_name(upload.filename or "upload.wav")
+        if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
+            raise HTTPException(status_code=400, detail=f"Unsupported audio or video format: {filename}")
+        candidate = filename
+        counter = 2
+        while candidate.lower() in seen:
+            source = Path(filename)
+            candidate = f"{source.stem}-{counter}{source.suffix}"
+            counter += 1
+        seen.add(candidate.lower())
+        filenames.append(candidate)
+    return filenames
+
+
+def safe_artifact_name(name: str) -> str:
+    path = Path(name)
+    if not name or path.name != name or len(path.parts) != 1:
+        raise RuntimeError(f"The registry supplied an unsafe model filename: {name}")
+    return name
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def model_artifacts_ready(model: ModelChoice) -> bool:
+    artifacts_ready = bool(model.artifacts) and all(
+        (target := MODEL_ROOT / safe_artifact_name(artifact.name)).is_file()
+        and sha256_file(target).lower() == artifact.sha256.lower()
+        for artifact in model.artifacts
+    )
+    if not artifacts_ready:
+        return False
+    has_config = any(Path(artifact.name).suffix.lower() in {".yaml", ".yml"} for artifact in model.artifacts)
+    return not has_config or (MODEL_ROOT / f"{Path(model.filename).stem}.yaml").is_file()
+
+
+def download_artifact(artifact: ModelArtifact, progress: Callable[[float], None]) -> Path:
+    name = safe_artifact_name(artifact.name)
+    expected = artifact.sha256.lower()
+    target = MODEL_ROOT / name
+    if target.is_file() and sha256_file(target).lower() == expected:
+        progress(1.0)
+        return target
+    target.unlink(missing_ok=True)
+    part = MODEL_ROOT / f".{name}.{uuid.uuid4().hex}.part"
+    request = urllib.request.Request(artifact.url, headers={"User-Agent": "Stem-Separator-Server"})
+    try:
+        with urllib.request.urlopen(request, timeout=1800) as response, part.open("wb") as output:
+            total = int(response.headers.get("Content-Length") or 0)
+            written = 0
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+                written += len(chunk)
+                progress(min(0.99, written / total) if total > 0 else 0.12)
+        actual = sha256_file(part).lower()
+        if actual != expected:
+            raise RuntimeError(f"The downloaded {name} failed its SHA-256 check. Expected {expected}, received {actual}.")
+        part.replace(target)
+        progress(1.0)
+        return target
+    finally:
+        part.unlink(missing_ok=True)
+
+
+async def ensure_model_artifacts(job: Job, model: ModelChoice, model_index: int, model_count: int) -> None:
+    if not model.artifacts or model_artifacts_ready(model):
+        return
+    config_path: Path | None = None
+    artifact_count = len(model.artifacts)
+    for artifact_index, artifact in enumerate(model.artifacts):
+        job.stage = f"Downloading {model.name}"
+        job.detail = f"{artifact.name} · {artifact_index + 1} of {artifact_count}"
+        job.phase = "download"
+        job.model_name = model.name
+        job.model_index = model_index
+        job.model_count = model_count
+
+        def update_progress(value: float) -> None:
+            ensure_running(job)
+            job.phase_progress = 100 * (artifact_index + value) / max(artifact_count, 1)
+            job.progress = max(job.progress, 0.5 + 0.5 * job.phase_progress / 100)
+
+        path = await asyncio.to_thread(download_artifact, artifact, update_progress)
+        if path.suffix.lower() in {".yaml", ".yml"}:
+            config_path = path
+
+    checkpoint_stem = Path(model.filename).stem
+    expected_config = MODEL_ROOT / f"{checkpoint_stem}.yaml"
+    if config_path is not None and config_path != expected_config:
+        part = MODEL_ROOT / f".{checkpoint_stem}.yaml.part"
+        await asyncio.to_thread(shutil.copy2, config_path, part)
+        part.replace(expected_config)
 
 
 def matching_output(directory: Path, stem: str) -> Path | None:
@@ -247,6 +363,9 @@ async def process_job(job_id: str) -> None:
             plan = REGISTRY.plan(job.stems, job.multi_track)
             job.model_count = len(plan)
             output_root.mkdir(parents=True, exist_ok=True)
+            for model_index, model in enumerate(plan, start=1):
+                ensure_running(job)
+                await ensure_model_artifacts(job, model, model_index, len(plan))
             file_share = 96 / max(len(job.filenames), 1)
             for file_index, filename in enumerate(job.filenames):
                 ensure_running(job)
@@ -280,12 +399,12 @@ async def process_job(job_id: str) -> None:
                     run_dir.mkdir(parents=True, exist_ok=True)
                     covered = list(model.stems)
                     job.stage = f"Separating {' + '.join(stem.title() for stem in covered)}"
-                    job.detail = f"{model.name} · running on the CUDA server"
+                    job.detail = f"{model.name} · running on this server"
                     model_path = MODEL_ROOT / model.filename
                     downloading = not model_path.is_file()
                     job.phase = "download" if downloading else "separate"
                     if downloading:
-                        job.stage = "Downloading model"
+                        job.stage = f"Downloading {model.name}"
                         job.detail = f"{model.name} · needed for {' + '.join(stem.title() for stem in covered)}"
                     job.phase_progress = 0.0
                     job.model_name = model.name
@@ -311,13 +430,13 @@ async def process_job(job_id: str) -> None:
                         (start, end),
                         download_watch=model_path if downloading else None,
                         separation_stage=f"Separating {' + '.join(stem.title() for stem in covered)}",
-                        separation_detail=f"{model.name} · running on the CUDA server",
+                        separation_detail=f"{model.name} · running on this server",
                     )
                     job.phase_progress = 100.0
                     job.progress = end
 
                 job.stage = "Finishing up"
-                job.detail = f"Writing output files for {filename}"
+                job.detail = f"Writing WAV files for {filename}" if input_path.suffix.lower() == ".wav" else f"Aligning and writing outputs for {filename}"
                 job.phase = "finish"
                 job.phase_progress = 18.0
                 job.model_name = None
@@ -371,7 +490,7 @@ async def process_job(job_id: str) -> None:
                         bundle.write(output, output.relative_to(output_root))
             job.status = "complete"
             job.stage = "Your stems are ready"
-            job.detail = f"Created {len(job.outputs)} WAV file(s)."
+            job.detail = f"Created {len(job.outputs)} output file(s)."
             job.progress = 100.0
             job.phase = "complete"
             job.phase_progress = 100.0
@@ -422,31 +541,73 @@ async def list_jobs() -> list[dict]:
     return [job_payload(job) for job in sorted(JOBS.values(), key=lambda value: value.created_at, reverse=True)]
 
 
+@app.post("/api/uploads", status_code=201)
+async def create_upload() -> dict:
+    upload_id = uuid.uuid4().hex[:16]
+    session = UploadSession(id=upload_id)
+    UPLOADS[upload_id] = session
+    (UPLOADS_ROOT / upload_id).mkdir(parents=True, exist_ok=False)
+    return {"id": upload_id, "status": session.status}
+
+
+@app.post("/api/uploads/{upload_id}")
+async def upload_files(
+    upload_id: str,
+    files: list[UploadFile] = File(default=[]),
+    file: UploadFile | None = File(default=None),
+) -> dict:
+    session = UPLOADS.get(upload_id)
+    if not session or session.status == "cancelled":
+        raise HTTPException(status_code=404, detail="Upload session not found.")
+    if session.status == "complete":
+        return {"id": session.id, "status": session.status, "filenames": session.filenames}
+    if file is not None:
+        files = [file, *files]
+    if not files:
+        raise HTTPException(status_code=400, detail="Choose at least one audio or video file.")
+    filenames = upload_filenames(files)
+    session_root = UPLOADS_ROOT / upload_id
+    input_dir = session_root / "input"
+    shutil.rmtree(input_dir, ignore_errors=True)
+    input_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        for upload, filename in zip(files, filenames, strict=True):
+            await write_upload(upload, input_dir / filename)
+    except Exception:
+        shutil.rmtree(input_dir, ignore_errors=True)
+        raise
+    session.filenames = filenames
+    session.status = "complete"
+    return {"id": session.id, "status": session.status, "filenames": filenames}
+
+
+@app.delete("/api/uploads/{upload_id}", status_code=202)
+async def cancel_upload(upload_id: str) -> dict:
+    session = UPLOADS.pop(upload_id, None)
+    if session:
+        session.status = "cancelled"
+    shutil.rmtree(UPLOADS_ROOT / upload_id, ignore_errors=True)
+    return {"id": upload_id, "status": "cancelled"}
+
+
 @app.post("/api/jobs", status_code=202)
 async def create_job(
     files: list[UploadFile] = File(default=[]),
     file: UploadFile | None = File(default=None),
     stems: str = Form("vocals,instrumental"),
     multi_track: bool = Form(False),
+    upload_id: str | None = Form(default=None),
 ) -> dict:
     if file is not None:
         files = [file, *files]
-    if not files:
+    session = UPLOADS.get(upload_id) if upload_id else None
+    if upload_id and (not session or session.status != "complete"):
+        raise HTTPException(status_code=409, detail="The background upload has not finished yet.")
+    if not files and not session:
         raise HTTPException(status_code=400, detail="Choose at least one audio or video file.")
-    filenames: list[str] = []
-    seen: set[str] = set()
-    for upload in files:
-        filename = safe_name(upload.filename or "upload.wav")
-        if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
-            raise HTTPException(status_code=400, detail=f"Unsupported audio or video format: {filename}")
-        candidate = filename
-        counter = 2
-        while candidate.lower() in seen:
-            source = Path(filename)
-            candidate = f"{source.stem}-{counter}{source.suffix}"
-            counter += 1
-        seen.add(candidate.lower())
-        filenames.append(candidate)
+    if files and session:
+        raise HTTPException(status_code=400, detail="Use either a completed background upload or direct files, not both.")
+    filenames = list(session.filenames) if session else upload_filenames(files)
     selected = list(dict.fromkeys(value.strip().lower() for value in stems.split(",") if value.strip()))
     await asyncio.to_thread(REGISTRY.refresh)
     supported = set(REGISTRY.stems())
@@ -457,9 +618,15 @@ async def create_job(
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_ROOT / job_id
     input_dir = job_dir / "input"
-    input_dir.mkdir(parents=True, exist_ok=False)
-    for upload, filename in zip(files, filenames, strict=True):
-        await write_upload(upload, input_dir / filename)
+    job_dir.mkdir(parents=True, exist_ok=False)
+    if session and upload_id:
+        (UPLOADS_ROOT / upload_id / "input").replace(input_dir)
+        UPLOADS.pop(upload_id, None)
+        shutil.rmtree(UPLOADS_ROOT / upload_id, ignore_errors=True)
+    else:
+        input_dir.mkdir(parents=True, exist_ok=False)
+        for upload, filename in zip(files, filenames, strict=True):
+            await write_upload(upload, input_dir / filename)
     job = Job(id=job_id, filenames=filenames, stems=selected, multi_track=multi_track, file_count=len(filenames))
     JOBS[job_id] = job
     asyncio.create_task(process_job(job_id))
