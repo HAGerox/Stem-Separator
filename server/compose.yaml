@@ -1,8 +1,8 @@
 services:
   stem-separator:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: server/Dockerfile
     image: ${STEM_SEPARATOR_IMAGE:-ghcr.io/hagerox/stem-separator-server:latest}
     ports:
       - "127.0.0.1:7860:7860"

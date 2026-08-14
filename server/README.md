@@ -10,4 +10,4 @@ docker compose -f server/compose.yaml up --build
 
 Then open `http://localhost:7860`. See the repository root README for native WSL installation, CUDA checks, endpoints, environment variables, and workflow artifacts.
 
-The WebUI and API fetch the live `HAGerox/Stem-Separator-Models` registry and expose only locally executable recommendations. Native installs update with `stem-separator-server-update`; container installs update with `docker compose pull && docker compose up -d`.
+The WebUI is the same React experience as the desktop app, adapted for browser uploads and downloads. It includes individual and coherent Multi-Track selection, staged progress, cancellation, waveform playback, per-stem downloads, video stem output, and ZIP downloads. The WebUI and API fetch the live `HAGerox/Stem-Separator-Models` registry and expose only locally executable recommendations. Native installs update with `stem-separator-server-update`; container installs update with `docker compose pull && docker compose up -d`.

@@ -1,11 +1,12 @@
 {
   "name": "stem-separator",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:server-web": "tsc && VITE_SERVER_MODE=1 vite build --outDir server/src/stem_separator_server/web --emptyOutDir",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

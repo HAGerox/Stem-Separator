@@ -10,6 +10,7 @@ on:
       - "src/**"
       - "catalog/**"
       - "package*.json"
+      - ".dockerignore"
       - ".github/workflows/build-wsl-cuda-server.yml"
 
 permissions:
@@ -32,6 +33,12 @@ jobs:
         with:
           version: "0.10.11"
           enable-cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Build shared server WebUI
+        run: npm ci && npm run build:server-web
       - name: Build server wheel
         run: uv build --wheel --out-dir package-output server
       - name: Smoke-test server package
@@ -83,7 +90,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
 
   cuda-container-ci:
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -92,7 +99,8 @@ jobs:
       - name: Build CUDA image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: ./server
+          context: .
+          file: ./server/Dockerfile
           platforms: linux/amd64
           load: true
           tags: ghcr.io/hagerox/stem-separator-server:ci
@@ -131,7 +139,8 @@ jobs:
         id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
-          context: ./server
+          context: .
+          file: ./server/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |

@@ -175,9 +175,9 @@ class ModelRegistry:
         recommended = self.catalog["recommendations"]
         return sorted(stem for stem in APP_STEMS if stem in recommended)
 
-    def plan(self, selected: list[str]) -> list[ModelChoice]:
+    def plan(self, selected: list[str], multi_track: bool = False) -> list[ModelChoice]:
         complete_mix = ["vocals", "drums", "bass", "guitar", "piano", "other"]
-        task = "multitrack_6" if set(selected) == set(complete_mix) else None
+        task = "multitrack_6" if multi_track and set(selected) == set(complete_mix) else None
         recommendation_ids = self.catalog["recommendations"]
         models = self.catalog["models"]
         if task and task in recommendation_ids:
@@ -201,10 +201,34 @@ class ModelRegistry:
         return result
 
     def payload(self) -> dict:
+        models = [
+            {
+                "id": model_id,
+                "filename": model["filename"],
+                "name": model["name"],
+                "architecture": "audio-separator",
+                "stems": model["stems"],
+                "quality": 96 if model.get("status") == "current" else 94 if model.get("status") == "specialist" else 86,
+                "speed": 50,
+                "memory": "high",
+                "note": "Selected from the capability-aware server model registry.",
+                "source": self.catalog["source"],
+                "license": model.get("license"),
+                "status": model.get("status"),
+            }
+            for model_id, model in self.catalog["models"].items()
+        ]
         return {
             "remote": self.remote,
             "source": self.catalog["source"],
             "generatedAt": self.catalog["generatedAt"],
             "stems": self.stems(),
-            "models": list(self.catalog["models"].values()),
+            "models": models,
+            "catalog": {
+                "schemaVersion": 1,
+                "generatedAt": self.catalog["generatedAt"],
+                "sourceLabel": f"{self.catalog['source']} · server-compatible recommendations",
+                "models": models,
+                "recommendations": self.catalog["recommendations"],
+            },
         }

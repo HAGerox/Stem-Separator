@@ -234,7 +234,10 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .waveform i { display: block; min-width: 1px; flex: 1 1 1px; border-radius: 3px; background: var(--surface); transition: background .12s ease; pointer-events: none; }.waveform i.played { background: var(--accent); }
 .waveform:hover i { filter: brightness(.98); }
 .player-time { width: 72px; color: var(--soft); font-size: 9px; text-align: right; font-variant-numeric: tabular-nums; }
+.stem-download { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; color: var(--muted); text-decoration: none; }
+.stem-download:hover { color: var(--accent); background: var(--accent-pale); }
 .result-actions { display: flex; justify-content: center; gap: 9px; margin-top: 22px; }
+.result-download-all { text-decoration: none; }
 .warning-banner { display: flex; align-items: center; gap: 10px; max-width: 720px; margin: 0 auto 16px; padding: 11px 14px; background: color-mix(in srgb, #d79b3d 16%, var(--paper)); color: color-mix(in srgb, #d79b3d 75%, var(--ink)); border: 1px solid color-mix(in srgb, #d79b3d 24%, transparent); border-radius: 13px; font-size: 10px; }
 .warning-details { margin: 18px auto 0; max-width: 680px; color: var(--muted); font-size: 10px; }.warning-details summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }.warning-details p { margin: 8px 0 0 21px; }
 
@@ -252,4 +255,47 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 }
 @media (max-width: 840px) {
   .content-shell { width: calc(100% - 40px); }.preset-grid { grid-template-columns: 1fr; }.preset-card { min-height: 112px; }.stem-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.smart-plan span { max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* The server uses the same interface in an ordinary resizable browser. */
+.server-app { min-height: 100dvh; }
+.server-app .app-header { display: none; }
+.server-app .select-view, .server-app .results-view { padding-top: 28px; }
+.server-app .processing-view { padding-top: 28px; }
+
+@media (max-width: 759px) {
+  html, body, #root { min-width: 0; }
+  body { overflow: auto; }
+  .server-app { height: auto; min-height: 100dvh; overflow: visible; }
+  .server-app .drop-view { min-height: 100dvh; height: auto; padding: 34px 22px; }
+  .server-app .drop-view::before { inset: 24px; border-radius: 22px; }
+  .server-app .drop-copy { margin-top: -8px; }
+  .server-app .format-note { bottom: 44px; max-width: calc(100% - 72px); text-align: center; line-height: 1.5; }
+  .server-app .content-shell { width: calc(100% - 28px); overflow: visible; }
+  .server-app .select-view, .server-app .results-view { padding: 18px 0 28px; }
+  .file-row { min-height: 0; max-height: none; flex-direction: column; padding: 8px 0 14px; border-radius: 0; }
+  .file-list { display: flex; flex-direction: column; overflow: visible; padding: 0; }
+  .add-button { align-self: flex-end; }
+  .stem-section { padding-top: 22px; }
+  .drop-copy h1, .stem-section h1, .result-heading h1 { font-size: 27px; }
+  .preset-grid, .stem-grid { grid-template-columns: 1fr; }
+  .preset-card { min-height: 104px; }
+  .more-stem-grid .stem-card { min-height: 72px; }
+  .more-stems-toggle > span { align-items: flex-start; flex-direction: column; gap: 2px; text-align: left; }
+  .selection-footer { align-items: stretch; flex-direction: column; }
+  .start-button { width: 100%; }
+  .processing-view { min-height: 100dvh; display: flex; align-items: flex-start; }
+  .processing-card { padding: 22px 18px 17px; border-radius: 20px; }
+  .processing-summary { align-items: flex-start; gap: 13px; padding-bottom: 17px; }
+  .activity-disc { width: 46px; height: 46px; border-radius: 15px; }
+  .processing-summary h1 { font-size: 19px; }
+  .processing-topline span { max-width: 72%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage-row { min-height: 62px; }
+  .result-row { height: auto; min-height: 92px; padding: 13px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 30px; gap: 8px 11px; }
+  .result-label { width: auto; }
+  .waveform { grid-column: 1 / -1; grid-row: 2; min-width: 0; width: 100%; }
+  .player-time { display: none; }
+  .stem-download { grid-column: 3; grid-row: 1; }
+  .result-actions { flex-direction: column; }
+  .result-actions > * { width: 100%; }
 }

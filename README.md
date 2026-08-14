@@ -73,14 +73,16 @@ sudo apt install -y ffmpeg python3 python3-venv
 stem-separator-server
 ```
 
-The native server defaults to `127.0.0.1:7860`; do not bind it to another interface until authentication and TLS are added. The WebUI supports uploads, a single-GPU job queue, status polling, environment diagnostics, and ZIP downloads of 44.1 kHz WAV stems. Server state defaults to `~/.local/share/stem-separator-server`; override it with `STEM_SEPARATOR_DATA_DIR` and `STEM_SEPARATOR_MODEL_DIR`.
+The native server defaults to `127.0.0.1:7860`; do not bind it to another interface until authentication and TLS are added. The WebUI is built from the same React interface as the macOS app and supports multi-file uploads, the same individual/Multi-Track model routing, live staged progress, cancellation, waveform playback, individual output downloads, video stem remuxing, and a ZIP download of every result. Server state defaults to `~/.local/share/stem-separator-server`; override it with `STEM_SEPARATOR_DATA_DIR` and `STEM_SEPARATOR_MODEL_DIR`.
 
 Useful endpoints:
 
 - `GET /healthz`
 - `GET /api/environment`
-- `POST /api/jobs` as multipart form data with `file` and comma-separated `stems`
+- `POST /api/jobs` as multipart form data with one or more `files`, comma-separated `stems`, and optional `multi_track=true`
 - `GET /api/jobs/{id}`
+- `DELETE /api/jobs/{id}`
+- `GET /api/jobs/{id}/outputs/{name}`
 - `GET /api/jobs/{id}/download`
 
 `STEM_SEPARATOR_TORCH_COMPILE=1` enables the fork's optional Torch compilation path. It is off by default on the server because CUDA compatibility and warm-up cost vary by model/GPU.
@@ -146,7 +148,7 @@ The Rust backend:
 4. Finds the requested outputs, writes 24-bit WAV files, and pads/trims them to the probed source duration.
 5. For video sources, remuxes each selected stem against the original video stream without re-encoding the picture.
 
-Media is never uploaded by this prototype.
+The desktop app processes media directly on the Mac. The WebUI uploads media only to the Docker/WSL server the user opened; it is stored inside that server's configured job directory and is not sent to a third-party service.
 
 ## Known prototype limits
 

@@ -1,0 +1,16 @@
+.git
+.github
+.release-secrets
+.server-test
+node_modules
+dist
+artifacts
+src-tauri/target
+src-tauri/resources
+server/.venv
+server/.pytest_cache
+server/dist
+**/__pycache__
+**/*.pyc
+*.log
+.DS_Store

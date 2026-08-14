@@ -93,6 +93,7 @@ export interface ProcessResult {
   outputs: OutputStem[];
   warnings: string[];
   usedDemoMode: boolean;
+  serverMode?: boolean;
 }
 
 export interface EnvironmentStatus {

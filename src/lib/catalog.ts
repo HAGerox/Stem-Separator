@@ -1,5 +1,6 @@
 import fallbackCatalog from "../../catalog/models.v1.json";
 import type { Catalog, CatalogModel, ModelRun, StemId } from "../types";
+import { serverMode } from "./runtime";
 
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/HAGerox/Stem-Separator-Models/main/registry.json";
 const BUILD_ENV = import.meta.env || {};
@@ -161,6 +162,19 @@ function readCache(): CachedRegistry | null {
 }
 
 export async function loadCatalog(): Promise<{ catalog: Catalog; remote: boolean }> {
+  if (serverMode) {
+    try {
+      const response = await fetch("/api/models", { cache: "no-cache", headers: { Accept: "application/json" } });
+      if (response.ok) {
+        const payload = await response.json() as { catalog?: Catalog; remote?: boolean };
+        if (payload.catalog?.schemaVersion === 1 && payload.catalog.models.length > 0) {
+          return { catalog: payload.catalog, remote: payload.remote === true };
+        }
+      }
+    } catch {
+      // The bundled catalog still keeps the interface usable while the server starts.
+    }
+  }
   const cached = readCache();
   try {
     const headers = new Headers({ Accept: "application/json" });

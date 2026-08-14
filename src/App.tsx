@@ -28,6 +28,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { availableStems, buildModelPlan, loadCatalog } from "./lib/catalog";
 import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, resolveInputs, revealPath } from "./lib/native";
+import { cancelServerJob, processServerJob } from "./lib/server";
+import { serverMode } from "./lib/runtime";
 import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
 
 type StemOption = {
@@ -217,7 +219,7 @@ function DropView({ onPick, dragging }: { onPick: (folder?: boolean) => void; dr
         <h1>Drop audio or video here</h1>
         <p>Choose a file, then pick the parts you want to hear.</p>
         <button className="primary-button" onClick={() => onPick(false)}>Choose files</button>
-        <button className="text-button" onClick={() => onPick(true)}><Folder size={15} /> Choose a folder</button>
+        {!serverMode && <button className="text-button" onClick={() => onPick(true)}><Folder size={15} /> Choose a folder</button>}
       </section>
       <div className="format-note">WAV · MP3 · FLAC · M4A · MP4 · MOV and more</div>
     </main>
@@ -579,6 +581,7 @@ function StemPlayer({ output }: { output: OutputStem }) {
       <div className="result-label"><strong>{stemLabel(output.stem)}</strong><span>{output.sourceName} · {output.isVideo ? "Video" : "WAV"}</span></div>
       <Waveform seed={output.name} current={current} duration={output.durationSeconds || audioRef.current?.duration || 0} onSeek={seek} />
       <span className="player-time">{formatTime(current)} / {formatTime(output.durationSeconds)}</span>
+      {serverMode && <a className="stem-download" href={`${output.path}?download=1`} download={output.name} aria-label={`Download ${stemLabel(output.stem)}`} title={`Download ${output.name}`}><Download size={15} /></a>}
     </div>
   );
 }
@@ -602,10 +605,12 @@ function ResultsView({ result, onReset, onBack }: { result: ProcessResult; onRes
         <h1>Your stems are ready</h1>
         <p>{visibleOutputs.length} {visibleOutputs.length === 1 ? "stem" : "stems"} ready{hasVideo ? " · Video versions shown" : " · WAV"}</p>
       </section>
-      {result.usedDemoMode && <div className="warning-banner"><CircleAlert size={18} /><span><strong>Preview processing was used.</strong> Run the desktop app for local separation.</span></div>}
+      {result.usedDemoMode && <div className="warning-banner"><CircleAlert size={18} /><span><strong>Preview processing was used.</strong> {serverMode ? "Choose your own files to process them on this server." : "Run the desktop app for local separation."}</span></div>}
       <section className="results-list">{visibleOutputs.map((output) => <StemPlayer key={`${output.path}-${output.stem}-${output.isVideo}`} output={output} />)}</section>
       <section className="result-actions">
-        <button className="primary-button" onClick={() => revealPath(result.outputDirectory)}><FolderOpen size={17} /> Show in Finder</button>
+        {serverMode
+          ? <a className="primary-button result-download-all" href={result.outputDirectory} download><Download size={17} /> Download all stems</a>
+          : <button className="primary-button" onClick={() => revealPath(result.outputDirectory)}><FolderOpen size={17} /> Show in Finder</button>}
         <button className="secondary-button" onClick={onReset}><RotateCcw size={16} /> Separate something else</button>
       </section>
       {result.warnings.length > 0 && <details className="warning-details"><summary><Info size={15} /> Notes from this run</summary>{result.warnings.map((warning) => <p key={warning}>{warning}</p>)}</details>}
@@ -630,6 +635,7 @@ function ConfirmStop({ stopping, onCancel, onConfirm }: { stopping: boolean; onC
 }
 
 export default function App() {
+  const demoMode = new URLSearchParams(window.location.search).has("demo");
   const [view, setView] = useState<View>("drop");
   const [files, setFiles] = useState<InputFile[]>([]);
   const [selected, setSelected] = useState<StemId[]>(["vocals"]);
@@ -647,6 +653,7 @@ export default function App() {
   const previewCompletion = useRef<number | null>(null);
   const cancelled = useRef(false);
   const starting = useRef(false);
+  const browserFiles = useRef(new Map<string, File>());
   const viewRef = useRef<View>(view);
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected, multiTrack) : [], [catalog, multiTrack, selected]);
 
@@ -655,7 +662,7 @@ export default function App() {
   useEffect(() => {
     loadCatalog().then(({ catalog: nextCatalog }) => { setCatalog(nextCatalog); });
     if (inTauri) checkForUpdate().then(setUpdate).catch(() => undefined);
-    if (new URLSearchParams(window.location.search).has("demo")) {
+    if (demoMode) {
       setFiles([
         { path: "demo-session.wav", name: "studio-session.wav", extension: "wav", sizeBytes: 84_900_000, durationSeconds: 237, isVideo: false },
         { path: "demo-live.mov", name: "live-take.mov", extension: "mov", sizeBytes: 416_000_000, durationSeconds: 237, isVideo: true },
@@ -717,7 +724,11 @@ export default function App() {
       const input = document.createElement("input");
       input.type = "file"; input.multiple = true; input.accept = "audio/*,video/*";
       input.onchange = () => {
-        const picked = Array.from(input.files || []).map<InputFile>((file) => ({ path: URL.createObjectURL(file), name: file.name, extension: extension(file.name), sizeBytes: file.size, isVideo: file.type.startsWith("video/") }));
+        const picked = Array.from(input.files || []).map<InputFile>((file) => {
+          const path = URL.createObjectURL(file);
+          browserFiles.current.set(path, file);
+          return { path, name: file.name, extension: extension(file.name), sizeBytes: file.size, isVideo: file.type.startsWith("video/") || ["mp4", "mov", "mkv", "webm", "m4v", "avi"].includes(extension(file.name)) };
+        });
         setFiles((current) => [...current, ...picked]);
         if (picked.length) setView("select");
       };
@@ -747,6 +758,23 @@ export default function App() {
       phase: startsWithVideo ? "prepare" : "separate",
       phaseProgress: 1,
     });
+
+    if (serverMode && !demoMode) {
+      try {
+        const uploads = files.map((file) => browserFiles.current.get(file.path)).filter((file): file is File => !!file);
+        if (uploads.length !== files.length) throw new Error("One or more selected files are no longer available. Add them again and retry.");
+        const nextResult = await processServerJob(uploads, selected, multiTrack, setProgress);
+        if (!cancelled.current) { setResult(nextResult); setView("results"); }
+      } catch (reason) {
+        if (!cancelled.current && !(reason instanceof DOMException && reason.name === "AbortError")) {
+          setError(String(reason));
+          setView("select");
+        }
+      } finally {
+        starting.current = false;
+      }
+      return;
+    }
 
     if (!inTauri) {
       let value = 1;
@@ -783,15 +811,27 @@ export default function App() {
     cancelled.current = true;
     if (previewTimer.current) window.clearInterval(previewTimer.current);
     if (previewCompletion.current) window.clearTimeout(previewCompletion.current);
-    try { await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId); }
+    try {
+      if (serverMode) await cancelServerJob(progress.jobId);
+      else await cancelJob(progress.jobId === "starting" ? undefined : progress.jobId);
+    }
     catch (reason) { setError(String(reason)); }
     finally { starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
   };
 
-  const reset = () => { setFiles([]); setResult(null); setSelected(["vocals"]); setMultiTrack(false); setView("drop"); };
+  const reset = () => {
+    for (const path of browserFiles.current.keys()) URL.revokeObjectURL(path);
+    browserFiles.current.clear();
+    setFiles([]); setResult(null); setSelected(["vocals"]); setMultiTrack(false); setView("drop");
+  };
   const goBack = () => { if (view === "select") reset(); else if (view === "results") setView("select"); };
   const removeFile = (index: number) => {
     setFiles((current) => {
+      const removed = current[index];
+      if (removed && browserFiles.current.has(removed.path)) {
+        URL.revokeObjectURL(removed.path);
+        browserFiles.current.delete(removed.path);
+      }
       const remaining = current.filter((_, itemIndex) => itemIndex !== index);
       if (remaining.length === 0) setView("drop");
       return remaining;
@@ -806,7 +846,22 @@ export default function App() {
   };
 
   return (
-    <div className={`app app-${view}`}>
+    <div
+      className={`app app-${view} ${serverMode ? "server-app" : ""}`}
+      onDragOver={serverMode && view !== "results" ? (event) => { event.preventDefault(); setDragging(true); } : undefined}
+      onDragLeave={serverMode && view !== "results" ? (event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); } : undefined}
+      onDrop={serverMode && view !== "results" ? (event) => {
+        event.preventDefault();
+        setDragging(false);
+        const dropped = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith("audio/") || file.type.startsWith("video/") || ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma", "mp4", "mov", "mkv", "webm", "m4v", "avi"].includes(extension(file.name)));
+        const resolved = dropped.map<InputFile>((file) => {
+          const path = URL.createObjectURL(file);
+          browserFiles.current.set(path, file);
+          return { path, name: file.name, extension: extension(file.name), sizeBytes: file.size, isVideo: file.type.startsWith("video/") || ["mp4", "mov", "mkv", "webm", "m4v", "avi"].includes(extension(file.name)) };
+        });
+        if (resolved.length) { setFiles((current) => [...current, ...resolved]); setView("select"); }
+      } : undefined}
+    >
       <Header update={update} updating={updating} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
       {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} />}

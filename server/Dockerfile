@@ -1,3 +1,11 @@
+FROM node:24-bookworm-slim AS web-build
+
+WORKDIR /source
+COPY package.json package-lock.json tsconfig.json tsconfig.node.json vite.config.ts index.html /source/
+COPY src /source/src
+COPY catalog /source/catalog
+RUN npm ci && npm run build:server-web
+
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 ARG AUDIO_SEPARATOR_COMMIT=dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3
@@ -17,7 +25,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . /app/server
+COPY server /app/server
+COPY --from=web-build /source/server/src/stem_separator_server/web /app/server/src/stem_separator_server/web
 RUN python3.12 -m venv /opt/stem-separator \
     && /opt/stem-separator/bin/pip install --upgrade pip \
     && /opt/stem-separator/bin/pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
