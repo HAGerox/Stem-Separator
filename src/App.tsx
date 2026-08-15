@@ -24,7 +24,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { availableStems, buildModelPlan, loadCatalog } from "./lib/catalog";
+import { availableStems, buildModelPlan, loadCatalog, recommendedMultiTrackModel, recommendedMultiTrackStems } from "./lib/catalog";
 import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, requiredModelDownloads, resolveInputs, revealPath } from "./lib/native";
 import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
 import type { ServerUploadHandle, ServerUploadSnapshot } from "./lib/server";
@@ -53,8 +53,6 @@ const STEMS: StemOption[] = [
   { id: "cymbals", label: "Cymbals", description: "Crashes, rides and cymbals", glyph: "drum", primary: false },
   { id: "other", label: "Other", description: "Multi-Track remainder", glyph: "dots", primary: false },
 ];
-
-const MULTI_TRACK_STEMS: StemId[] = ["vocals", "drums", "bass", "guitar", "piano", "other"];
 
 function extension(name: string) {
   const value = name.split(".").pop();
@@ -266,6 +264,8 @@ function SelectView({
 }) {
   const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
   const visibleStems = STEMS.filter((stem) => stem.id !== "other" && supportedStems.has(stem.id));
+  const multiTrackModel = useMemo(() => recommendedMultiTrackModel(catalog), [catalog]);
+  const multiTrackStems = useMemo(() => recommendedMultiTrackStems(catalog), [catalog]);
 
   const toggleStem = (stem: StemId) => {
     if (multiTrack) {
@@ -278,8 +278,9 @@ function SelectView({
   };
 
   const chooseMultiTrack = () => {
+    if (!multiTrackStems.length) return;
     setMultiTrack(true);
-    setSelected(MULTI_TRACK_STEMS);
+    setSelected([...multiTrackStems]);
   };
 
   return (
@@ -301,19 +302,19 @@ function SelectView({
 
         <section className="stem-picker">
           <h1>Choose your stems</h1>
-
-          <button className={`multitrack-option ${multiTrack ? "selected" : ""}`} aria-pressed={multiTrack} onClick={chooseMultiTrack}>
-            <span className="multitrack-option-icon"><StemGlyph type="multi" /></span>
-            <span className="multitrack-option-copy">
-              <strong>Multi-Track</strong>
-              <small>All parts add back up to the original.</small>
-            </span>
-          </button>
-
-          <h2>Individual stems</h2>
           <div className="stem-grid">
             {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} prominent={stem.id === "vocals" || stem.id === "instrumental"} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
           </div>
+
+          {multiTrackModel && <section className="multitrack-section" aria-label="Multi-Track">
+            <button className={`multitrack-option ${multiTrack ? "selected" : ""}`} aria-pressed={multiTrack} onClick={chooseMultiTrack}>
+              <span className="multitrack-option-icon"><StemGlyph type="multi" /></span>
+              <span className="multitrack-option-copy">
+                <strong>Multi-Track</strong>
+                <small>{multiTrackStems.map(stemLabel).join(" · ")} — add back up to the original.</small>
+              </span>
+            </button>
+          </section>}
         </section>
       </div>
 
@@ -688,12 +689,18 @@ export default function App() {
 
   useEffect(() => {
     if (!catalog) return;
+    if (multiTrack) {
+      const stems = recommendedMultiTrackStems(catalog);
+      if (stems.length) setSelected(stems);
+      else setMultiTrack(false);
+      return;
+    }
     const supported = new Set(availableStems(catalog));
     setSelected((current) => {
       const filtered = current.filter((stem) => supported.has(stem));
       return filtered.length ? filtered : supported.has("vocals") ? ["vocals"] : [...supported].slice(0, 1);
     });
-  }, [catalog]);
+  }, [catalog, multiTrack]);
 
   useEffect(() => {
     if (!serverMode || demoMode || view !== "select") return;

@@ -611,6 +611,10 @@ async def create_job(
     selected = list(dict.fromkeys(value.strip().lower() for value in stems.split(",") if value.strip()))
     await asyncio.to_thread(REGISTRY.refresh)
     supported = set(REGISTRY.stems())
+    if multi_track:
+        recommended_multitrack = REGISTRY.recommended_multitrack()
+        if recommended_multitrack:
+            supported.update(recommended_multitrack[1]["stems"])
     invalid = [stem for stem in selected if stem not in supported]
     if not selected or invalid:
         raise HTTPException(status_code=400, detail=f"Invalid stem selection: {', '.join(invalid) or 'none'}")

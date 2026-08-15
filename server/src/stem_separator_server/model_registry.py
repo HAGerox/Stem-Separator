@@ -235,16 +235,27 @@ class ModelRegistry:
         recommended = self.catalog["recommendations"]
         return sorted(stem for stem in APP_STEMS if stem in recommended)
 
+    def recommended_multitrack(self) -> tuple[str, dict] | None:
+        recommendations = self.catalog["recommendations"]
+        models = self.catalog["models"]
+        candidates = []
+        for task in ("multitrack_6", "multitrack_4"):
+            model_id = recommendations.get(task)
+            model = models.get(model_id) if model_id else None
+            if model:
+                candidates.append((model_id, model))
+        return max(candidates, key=lambda item: len(item[1]["stems"]), default=None)
+
     def plan(self, selected: list[str], multi_track: bool = False) -> list[ModelChoice]:
-        complete_mix = ["vocals", "drums", "bass", "guitar", "piano", "other"]
-        task = "multitrack_6" if multi_track and set(selected) == set(complete_mix) else None
         recommendation_ids = self.catalog["recommendations"]
         models = self.catalog["models"]
-        if task and task in recommendation_ids:
-            model_id = recommendation_ids[task]
-            model = models[model_id]
+        multitrack = self.recommended_multitrack() if multi_track else None
+        if multitrack:
+            model_id, model = multitrack
+            if set(selected) != set(model["stems"]):
+                raise ValueError("The Multi-Track stem selection does not match the recommended model.")
             artifacts = tuple(ModelArtifact(**artifact) for artifact in model.get("artifacts", []))
-            return [ModelChoice(model_id, model["name"], model["filename"], tuple(selected), artifacts)]
+            return [ModelChoice(model_id, model["name"], model["filename"], tuple(model["stems"]), artifacts)]
 
         result: list[ModelChoice] = []
         result_index: dict[str, int] = {}

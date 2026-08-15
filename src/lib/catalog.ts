@@ -208,6 +208,22 @@ function recommendation(catalog: Catalog, task: StemId | "multitrack_4" | "multi
   return id ? catalog.models.find((model) => model.id === id) : undefined;
 }
 
+export function recommendedMultiTrackModel(catalog: Catalog | null): CatalogModel | undefined {
+  if (!catalog) return undefined;
+  const recommended = [
+    recommendation(catalog, "multitrack_6"),
+    recommendation(catalog, "multitrack_4"),
+  ].filter((model): model is CatalogModel => !!model);
+  return recommended.sort((a, b) => b.stems.length - a.stems.length || b.quality - a.quality)[0];
+}
+
+export function recommendedMultiTrackStems(catalog: Catalog | null): StemId[] {
+  const model = recommendedMultiTrackModel(catalog);
+  if (!model) return [];
+  const order = [...APP_STEMS];
+  return [...model.stems].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
 export function availableStems(catalog: Catalog | null): StemId[] {
   if (!catalog) return [];
   return [...APP_STEMS].filter((stem) => recommendation(catalog, stem)
@@ -215,12 +231,9 @@ export function availableStems(catalog: Catalog | null): StemId[] {
 }
 
 export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack = false): ModelRun[] {
-  const completeMix = ["vocals", "drums", "bass", "guitar", "piano", "other"] satisfies StemId[];
-  const isCompleteMix = multiTrack && selected.length === completeMix.length && completeMix.every((stem) => selected.includes(stem));
-  if (isCompleteMix) {
-    const model = recommendation(catalog, "multitrack_6")
-      || catalog.models.find((candidate) => completeMix.every((stem) => candidate.stems.includes(stem)));
-    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: completeMix, artifacts: model.artifacts }];
+  if (multiTrack) {
+    const model = recommendedMultiTrackModel(catalog);
+    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: [...model.stems], artifacts: model.artifacts }];
   }
 
   // Custom selections are independent extraction targets. Resolve the best
