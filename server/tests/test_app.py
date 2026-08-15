@@ -231,13 +231,12 @@ def test_multitrack_is_an_explicit_special_case(tmp_path, monkeypatch):
     assert len(individual) > 1
 
 
-def test_multitrack_stems_follow_the_recommended_model(tmp_path):
-    from stem_separator_server.model_registry import ModelRegistry
-
-    registry = ModelRegistry(tmp_path)
-    registry.catalog["recommendations"]["multitrack_6"] = "htdemucs-ft"
-    selected = registry.catalog["models"]["htdemucs-ft"]["stems"]
-    multitrack = registry.plan(selected, multi_track=True)
+def test_multitrack_stems_follow_the_recommended_model(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    server_app.REGISTRY.catalog["recommendations"]["multitrack_6"] = "htdemucs-ft"
+    selected = server_app.REGISTRY.catalog["models"]["htdemucs-ft"]["stems"]
+    multitrack = server_app.REGISTRY.plan(selected, multi_track=True)
     assert len(multitrack) == 1
     assert multitrack[0].filename == "htdemucs_ft.yaml"
     assert multitrack[0].stems == tuple(selected)

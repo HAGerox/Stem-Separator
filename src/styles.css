@@ -95,10 +95,10 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .text-button:hover { color: var(--ink); background: var(--hover); }
 .format-note { position: absolute; bottom: 72px; color: var(--soft); font-size: 10px; letter-spacing: .85px; font-weight: 600; }
 
-.content-shell { width: min(980px, calc(100% - 64px)); margin: 0 auto; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
-.select-view { padding: 50px 0 30px; }
+.content-shell { width: min(980px, calc(100% - clamp(40px, 5vw, 64px))); margin: 0 auto; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
+.select-view { padding: 50px 0 30px; display: flex; flex-direction: column; }
 .page-back-button { min-height: 32px; margin: 0 0 12px; padding: 0 9px 0 7px; display: inline-flex; align-items: center; gap: 2px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }.page-back-button:hover { color: var(--ink); background: var(--hover); }
-.choose-layout { min-height: 530px; display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 34px; }
+.choose-layout { min-height: 530px; flex: 1; display: grid; grid-template-columns: clamp(225px, 29vw, 290px) minmax(0, 1fr); gap: clamp(18px, 2.7vw, 34px); }
 .file-panel { min-height: 0; padding: 20px; border: 1px solid var(--line); border-radius: 20px; background: color-mix(in srgb, var(--card) 74%, transparent); display: flex; flex-direction: column; position: relative; transition: .18s ease; }
 .file-panel.is-dragging { border-color: var(--accent); background: var(--accent-pale); }.file-panel.is-dragging > :not(.add-drop-hint) { opacity: .12; }
 .add-drop-hint { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--accent); font-size: 12px; font-weight: 650; pointer-events: none; }
@@ -199,28 +199,9 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .error-toast { position: fixed; z-index: 40; bottom: 24px; left: 50%; transform: translateX(-50%); max-width: min(620px, calc(100% - 48px)); display: flex; align-items: center; gap: 9px; padding: 12px 12px 12px 15px; border-radius: 14px; background: #372f2f; color: white; font-size: 11px; box-shadow: 0 12px 40px rgba(37, 25, 25, .24); }.error-toast svg { color: #f4a5a5; flex: 0 0 auto; }.error-toast button { border: 0; background: rgba(255, 255, 255, .08); color: white; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; margin-left: 5px; }
 
 @media (max-height: 720px) {
-  .select-view { padding-top: 46px; }
-  .choose-layout { min-height: 470px; }
-  .file-panel { padding: 16px; }
-  .stem-picker h1 { margin-bottom: 16px; font-size: 28px; }
-  .multitrack-section { margin-top: 16px; }
-  .multitrack-option { min-height: 66px; }
-  .stem-card { min-height: 61px; }
-  .stem-card.prominent { min-height: 76px; }
-  .selection-action-bar { min-height: 64px; margin-top: 14px; padding-top: 14px; }
   .processing-card { transform: scale(.93); }
   .results-view { padding-top: 48px; }
   .result-heading p { margin-bottom: 16px; }
-}
-@media (max-width: 980px) {
-  .content-shell { width: calc(100% - 40px); }
-  .choose-layout { grid-template-columns: 250px minmax(0, 1fr); gap: 24px; }
-}
-@media (max-width: 840px) {
-  .choose-layout { grid-template-columns: 225px minmax(0, 1fr); gap: 18px; }
-  .file-panel { padding: 15px; }
-  .stem-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .stem-card, .stem-card.prominent { grid-column: span 1; }
 }
 
 /* The server uses the same interface in an ordinary resizable browser. */

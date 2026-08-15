@@ -218,10 +218,7 @@ export function recommendedMultiTrackModel(catalog: Catalog | null): CatalogMode
 }
 
 export function recommendedMultiTrackStems(catalog: Catalog | null): StemId[] {
-  const model = recommendedMultiTrackModel(catalog);
-  if (!model) return [];
-  const order = [...APP_STEMS];
-  return [...model.stems].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return recommendedMultiTrackModel(catalog)?.stems || [];
 }
 
 export function availableStems(catalog: Catalog | null): StemId[] {

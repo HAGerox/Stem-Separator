@@ -265,7 +265,7 @@ function SelectView({
   const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
   const visibleStems = STEMS.filter((stem) => stem.id !== "other" && supportedStems.has(stem.id));
   const multiTrackModel = useMemo(() => recommendedMultiTrackModel(catalog), [catalog]);
-  const multiTrackStems = useMemo(() => recommendedMultiTrackStems(catalog), [catalog]);
+  const multiTrackStems = multiTrackModel?.stems || [];
 
   const toggleStem = (stem: StemId) => {
     if (multiTrack) {
