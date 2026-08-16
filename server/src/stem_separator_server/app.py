@@ -37,6 +37,7 @@ ALLOWED_SUFFIXES = {
     ".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi",
 }
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+MODEL_WEIGHT_SUFFIXES = {".ckpt", ".pth", ".onnx", ".th"}
 REGISTRY = ModelRegistry(DATA_ROOT / "registry")
 
 
@@ -61,6 +62,7 @@ class Job:
     file_index: int = 0
     file_count: int = 1
     outputs: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     error: str | None = None
     process: asyncio.subprocess.Process | None = field(default=None, repr=False)
 
@@ -113,7 +115,11 @@ def job_payload(job: Job) -> dict:
         }
         for output in job.outputs
     ]
-    payload["downloadUrl"] = f"/api/jobs/{job.id}/download" if job.status == "complete" else None
+    archive = JOBS_ROOT / job.id / f"stem-separator-{job.id}.zip"
+    payload["downloadUrl"] = (
+        f"/api/jobs/{job.id}/download"
+        if job.status == "complete" and archive.is_file() else None
+    )
     return payload
 
 
@@ -200,6 +206,25 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def runtime_weight_artifact(model: ModelChoice) -> ModelArtifact | None:
+    if Path(model.filename).suffix.lower() not in MODEL_WEIGHT_SUFFIXES:
+        return None
+    candidates = [
+        artifact for artifact in model.artifacts
+        if Path(artifact.name).suffix.lower() in MODEL_WEIGHT_SUFFIXES
+    ]
+    exact = next((artifact for artifact in candidates if artifact.name == model.filename), None)
+    return exact or (candidates[0] if len(candidates) == 1 else None)
+
+
+def model_config_artifact(model: ModelChoice) -> ModelArtifact | None:
+    candidates = [
+        artifact for artifact in model.artifacts
+        if Path(artifact.name).suffix.lower() in {".yaml", ".yml"}
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def model_artifacts_ready(model: ModelChoice) -> bool:
     artifacts_ready = bool(model.artifacts) and all(
         (target := MODEL_ROOT / safe_artifact_name(artifact.name)).is_file()
@@ -208,8 +233,22 @@ def model_artifacts_ready(model: ModelChoice) -> bool:
     )
     if not artifacts_ready:
         return False
-    has_config = any(Path(artifact.name).suffix.lower() in {".yaml", ".yml"} for artifact in model.artifacts)
-    return not has_config or (MODEL_ROOT / f"{Path(model.filename).stem}.yaml").is_file()
+    runtime_weight = runtime_weight_artifact(model)
+    if runtime_weight is not None:
+        runtime_target = MODEL_ROOT / safe_artifact_name(model.filename)
+        if (
+            not runtime_target.is_file()
+            or sha256_file(runtime_target).lower() != runtime_weight.sha256.lower()
+        ):
+            return False
+    config = model_config_artifact(model)
+    if config is None:
+        return True
+    expected_config = MODEL_ROOT / f"{Path(model.filename).stem}.yaml"
+    return (
+        expected_config.is_file()
+        and sha256_file(expected_config).lower() == config.sha256.lower()
+    )
 
 
 def download_artifact(artifact: ModelArtifact, progress: Callable[[float], None]) -> Path:
@@ -243,7 +282,7 @@ def download_artifact(artifact: ModelArtifact, progress: Callable[[float], None]
 async def ensure_model_artifacts(job: Job, model: ModelChoice, model_index: int, model_count: int) -> None:
     if not model.artifacts or model_artifacts_ready(model):
         return
-    config_path: Path | None = None
+    downloaded_paths: dict[str, Path] = {}
     artifact_count = len(model.artifacts)
     for artifact_index, artifact in enumerate(model.artifacts):
         job.stage = f"Downloading {model.name}"
@@ -259,10 +298,22 @@ async def ensure_model_artifacts(job: Job, model: ModelChoice, model_index: int,
             job.progress = max(job.progress, 0.5 + 0.5 * job.phase_progress / 100)
 
         path = await asyncio.to_thread(download_artifact, artifact, update_progress)
-        if path.suffix.lower() in {".yaml", ".yml"}:
-            config_path = path
+        downloaded_paths[artifact.name] = path
 
     checkpoint_stem = Path(model.filename).stem
+    weight_artifact = runtime_weight_artifact(model)
+    checkpoint_path = downloaded_paths.get(weight_artifact.name) if weight_artifact else None
+    expected_checkpoint = MODEL_ROOT / safe_artifact_name(model.filename)
+    if (
+        checkpoint_path is not None
+        and Path(model.filename).suffix.lower() in MODEL_WEIGHT_SUFFIXES
+        and checkpoint_path != expected_checkpoint
+    ):
+        part = MODEL_ROOT / f".{Path(model.filename).name}.part"
+        await asyncio.to_thread(shutil.copy2, checkpoint_path, part)
+        part.replace(expected_checkpoint)
+    config_artifact = model_config_artifact(model)
+    config_path = downloaded_paths.get(config_artifact.name) if config_artifact else None
     expected_config = MODEL_ROOT / f"{checkpoint_stem}.yaml"
     if config_path is not None and config_path != expected_config:
         part = MODEL_ROOT / f".{checkpoint_stem}.yaml.part"
@@ -270,15 +321,28 @@ async def ensure_model_artifacts(job: Job, model: ModelChoice, model_index: int,
         part.replace(expected_config)
 
 
-def matching_output(directory: Path, stem: str) -> Path | None:
-    search = re.sub(r"[^a-z0-9]", "", stem.lower())
-    matches = [
-        path for path in directory.rglob("*")
-        if path.is_file()
-        and path.suffix.lower() == ".wav"
-        and search in re.sub(r"[^a-z0-9]", "", path.name.lower())
-    ]
+def matching_output(directory: Path, runtime_key: str) -> Path | None:
+    """Find an audio-separator output by its exact registry runtime key.
+
+    audio-separator places the stem identifier in the final ``_(Stem)_``
+    token. Looking only at that token prevents capability names from matching
+    arbitrary text in the input filename or model filename.
+    """
+    expected = runtime_key.casefold()
+    matches = []
+    for path in directory.rglob("*"):
+        if not path.is_file() or path.suffix.lower() != ".wav":
+            continue
+        tokens = re.findall(r"_\(([^()]*)\)(?=_|$)", path.stem)
+        emitted_key = tokens[-1] if tokens else path.stem
+        if emitted_key.casefold() == expected:
+            matches.append(path)
     return sorted(matches)[0] if matches else None
+
+
+def add_warning(job: Job, message: str) -> None:
+    if message not in job.warnings:
+        job.warnings.append(message)
 
 
 def probe_media(path: Path) -> MediaInfo:
@@ -403,9 +467,14 @@ async def process_job(job_id: str) -> None:
             plan = REGISTRY.plan(job.stems, job.multi_track)
             job.model_count = len(plan)
             output_root.mkdir(parents=True, exist_ok=True)
+            unavailable_models: set[str] = set()
             for model_index, model in enumerate(plan, start=1):
                 ensure_running(job)
-                await ensure_model_artifacts(job, model, model_index, len(plan))
+                try:
+                    await ensure_model_artifacts(job, model, model_index, len(plan))
+                except Exception as error:
+                    unavailable_models.add(model.id)
+                    add_warning(job, f"{model.name} could not be prepared: {error}")
             file_share = 96 / max(len(job.filenames), 1)
             for file_index, filename in enumerate(job.filenames):
                 ensure_running(job)
@@ -413,10 +482,8 @@ async def process_job(job_id: str) -> None:
                 media = await asyncio.to_thread(probe_media, input_path)
                 duration = media.duration
                 if media.inspected and media.audio_stream_index is None:
-                    raise RuntimeError(
-                        f"{filename} has no audio track, so there is nothing to separate. "
-                        "Choose a file that contains audio."
-                    )
+                    add_warning(job, f"{filename} has no audio track and was skipped.")
+                    continue
                 file_work = job_dir / "work" / f"file-{file_index}"
                 file_work.mkdir(parents=True, exist_ok=True)
                 job.file_index = file_index
@@ -438,18 +505,25 @@ async def process_job(job_id: str) -> None:
                         if media.audio_stream_index is not None
                         else "0:a:0?"
                     )
-                    await run_command(
-                        [
-                            "ffmpeg", "-y", "-i", str(input_path), "-vn", "-map", audio_map,
-                            "-c:a", "pcm_s24le", "-ar", "44100", str(separation_input),
-                        ],
-                        job,
-                    )
+                    try:
+                        await run_command(
+                            [
+                                "ffmpeg", "-y", "-i", str(input_path), "-vn", "-map", audio_map,
+                                "-c:a", "pcm_s24le", "-ar", "44100", str(separation_input),
+                            ],
+                            job,
+                        )
+                    except Exception as error:
+                        add_warning(job, f"{filename} could not be prepared and was skipped: {error}")
+                        continue
 
                 model_region = file_share * 0.92
                 model_share = model_region / max(len(plan), 1)
+                completed_models: set[str] = set()
                 for index, model in enumerate(plan):
                     ensure_running(job)
+                    if model.id in unavailable_models:
+                        continue
                     run_dir = file_work / f"model-{index}"
                     run_dir.mkdir(parents=True, exist_ok=True)
                     covered = list(model.stems)
@@ -479,16 +553,20 @@ async def process_job(job_id: str) -> None:
                     ]
                     if os.getenv("STEM_SEPARATOR_TORCH_COMPILE", "0") == "1":
                         command.append("--use_torch_compile")
-                    await run_command(
-                        command,
-                        job,
-                        (start, end),
-                        download_watch=model_path if downloading else None,
-                        separation_stage=f"Separating {' + '.join(stem.title() for stem in covered)}",
-                        separation_detail=f"{model.name} · running on this server",
-                    )
-                    job.phase_progress = 100.0
-                    job.progress = end
+                    try:
+                        await run_command(
+                            command,
+                            job,
+                            (start, end),
+                            download_watch=model_path if downloading else None,
+                            separation_stage=f"Separating {' + '.join(stem.title() for stem in covered)}",
+                            separation_detail=f"{model.name} · running on this server",
+                        )
+                        completed_models.add(model.id)
+                        job.phase_progress = 100.0
+                        job.progress = end
+                    except Exception as error:
+                        add_warning(job, f"{model.name} failed for {filename}: {error}")
 
                 job.stage = "Finishing up"
                 job.detail = f"Writing WAV files for {filename}" if input_path.suffix.lower() == ".wav" else f"Aligning and writing outputs for {filename}"
@@ -501,13 +579,27 @@ async def process_job(job_id: str) -> None:
                 source_output.mkdir(parents=True, exist_ok=True)
                 for stem_index, stem in enumerate(job.stems):
                     ensure_running(job)
-                    model_index = next(index for index, model in enumerate(plan) if stem in model.stems)
-                    source = matching_output(file_work / f"model-{model_index}", stem)
+                    model_index, model = next(
+                        (index, model) for index, model in enumerate(plan) if stem in model.stems
+                    )
+                    if model.id not in completed_models:
+                        add_warning(job, f"{stem.title()} could not be produced for {filename} because {model.name} did not complete.")
+                        continue
+                    runtime_key = model.runtime_key(stem)
+                    source = matching_output(file_work / f"model-{model_index}", runtime_key)
                     if not source:
-                        raise RuntimeError(f"The selected model did not return a {stem} WAV file.")
+                        add_warning(
+                            job,
+                            f"{model.name} did not return its declared '{runtime_key}' output for {stem.title()} in {filename}.",
+                        )
+                        continue
                     relative = Path(source_base) / f"{source_base}_{stem}.wav" if len(job.filenames) > 1 else Path(f"{source_base}_{stem}.wav")
                     target = output_root / relative
-                    shutil.copy2(source, target)
+                    try:
+                        shutil.copy2(source, target)
+                    except OSError as error:
+                        add_warning(job, f"{stem.title()} could not be saved for {filename}: {error}")
+                        continue
                     job.outputs.append({
                         "name": relative.as_posix(),
                         "stem": stem,
@@ -528,16 +620,22 @@ async def process_job(job_id: str) -> None:
                         if duration is not None:
                             command.extend(["-t", f"{duration:.6f}"])
                         command.append(str(video_target))
-                        await run_command(command, job)
-                        job.outputs.append({
-                            "name": video_relative.as_posix(),
-                            "stem": stem,
-                            "sourceName": filename,
-                            "isVideo": True,
-                            "durationSeconds": duration,
-                        })
+                        try:
+                            await run_command(command, job)
+                            job.outputs.append({
+                                "name": video_relative.as_posix(),
+                                "stem": stem,
+                                "sourceName": filename,
+                                "isVideo": True,
+                                "durationSeconds": duration,
+                            })
+                        except Exception as error:
+                            add_warning(job, f"The {stem.title()} WAV was created, but its video could not be created: {error}")
                     job.phase_progress = 20 + 75 * (stem_index + 1) / max(len(job.stems), 1)
 
+            if not job.outputs:
+                detail = job.warnings[0] if job.warnings else "The models returned no declared outputs."
+                raise RuntimeError(f"No requested outputs could be produced. {detail}")
             output_root.mkdir(parents=True, exist_ok=True)
             archive = job_dir / f"stem-separator-{job.id}.zip"
             with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
@@ -547,6 +645,8 @@ async def process_job(job_id: str) -> None:
             job.status = "complete"
             job.stage = "Your stems are ready"
             job.detail = f"Created {len(job.outputs)} output file(s)."
+            if job.warnings:
+                job.detail += f" {len(job.warnings)} warning(s) affected the remaining requested outputs."
             job.progress = 100.0
             job.phase = "complete"
             job.phase_progress = 100.0
@@ -558,6 +658,25 @@ async def process_job(job_id: str) -> None:
         job.finished_at = time.time()
     except Exception as error:
         if job.status == "cancelled":
+            return
+        if job.outputs:
+            add_warning(job, f"Processing stopped after some outputs were created: {error}")
+            archive = job_dir / f"stem-separator-{job.id}.zip"
+            try:
+                with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+                    for output in output_root.rglob("*"):
+                        if output.is_file():
+                            bundle.write(output, output.relative_to(output_root))
+            except Exception as archive_error:
+                archive.unlink(missing_ok=True)
+                add_warning(job, f"The partial-results archive could not be created: {archive_error}")
+            job.status = "complete"
+            job.stage = "Some stems are ready"
+            job.detail = f"Created {len(job.outputs)} output file(s) with {len(job.warnings)} warning(s)."
+            job.progress = 100.0
+            job.phase = "complete"
+            job.phase_progress = 100.0
+            job.finished_at = time.time()
             return
         job.status = "failed"
         job.stage = "Separation failed"
@@ -666,10 +785,15 @@ async def create_job(
     filenames = list(session.filenames) if session else upload_filenames(files)
     selected = list(dict.fromkeys(value.strip().lower() for value in stems.split(",") if value.strip()))
     await asyncio.to_thread(REGISTRY.refresh)
-    supported = set(REGISTRY.stems())
+    multitrack = REGISTRY.recommended_multitrack() if multi_track else None
+    supported = set(multitrack[1]["stems"] if multitrack else REGISTRY.stems())
     invalid = [stem for stem in selected if stem not in supported]
     if not selected or invalid:
         raise HTTPException(status_code=400, detail=f"Invalid stem selection: {', '.join(invalid) or 'none'}")
+    try:
+        REGISTRY.plan(selected, multi_track)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_ROOT / job_id

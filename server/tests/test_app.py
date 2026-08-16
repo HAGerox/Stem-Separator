@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib
 import io
 import zipfile
+
+import pytest
 
 
 def load_app(tmp_path, monkeypatch):
@@ -212,17 +216,17 @@ def test_model_registry_exposes_only_compatible_stems(tmp_path, monkeypatch):
     with TestClient(server_app.app) as client:
         payload = client.get("/api/models").json()
     assert "strings" not in payload["stems"]
-    assert {"vocals", "instrumental", "kick", "cymbals"}.issubset(payload["stems"])
+    assert set(payload["stems"]) == {
+        "vocals", "instrumental", "drums", "bass", "guitar", "piano", "other",
+    }
 
 
 def test_registry_builds_capability_aware_plan(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
     freeze_registry(server_app, monkeypatch)
     plan = server_app.REGISTRY.plan(["vocals", "instrumental"])
-    assert [model.filename for model in plan] == [
-        "becruily_deux.ckpt",
-        "mel_band_roformer_instrumental_fv7z_gabox.ckpt",
-    ]
+    assert [model.filename for model in plan] == ["becruily_deux.ckpt"]
+    assert plan[0].stems == ("vocals", "instrumental")
     assert plan[0].artifacts[0].name == "becruily_deux.ckpt"
     payload = server_app.REGISTRY.payload()
     assert payload["catalog"]["schemaVersion"] == 1
@@ -249,13 +253,206 @@ def test_registry_accepts_verified_direct_model_artifacts(tmp_path):
                     {"name": "config_deux_becruily.yaml", "url": "https://example.test/config", "sha256": digest},
                 ],
             },
-            "backends": {"audio_separator": {"state": "not_listed"}},
+            "backends": {
+                "audio_separator": {
+                    "state": "validated",
+                    "validated": True,
+                    "outputs": [
+                        {"runtime_key": "vocals", "capability": "vocals"},
+                        {"runtime_key": "instrumental", "capability": "instrumental"},
+                    ],
+                },
+            },
         }],
         "recommendations": {"vocals": {"model": "becruily-deux", "alternatives": []}},
     })
     assert converted["recommendations"]["vocals"] == "becruily-deux"
     assert converted["models"]["becruily-deux"]["filename"] == "becruily_deux.ckpt"
     assert len(converted["models"]["becruily-deux"]["artifacts"]) == 2
+
+
+def test_pinned_artifacts_are_staged_under_the_runtime_model_names(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    checkpoint = b"checkpoint"
+    config = b"config"
+    model = server_app.ModelChoice(
+        "model", "Model", "runtime-name.ckpt", ("vocals",),
+        (
+            server_app.ModelArtifact(
+                "upstream-name.ckpt", "https://example.test/checkpoint",
+                hashlib.sha256(checkpoint).hexdigest(),
+            ),
+            server_app.ModelArtifact(
+                "upstream-config.yaml", "https://example.test/config",
+                hashlib.sha256(config).hexdigest(),
+            ),
+        ),
+    )
+    content = {"upstream-name.ckpt": checkpoint, "upstream-config.yaml": config}
+
+    def fake_download(artifact, progress):
+        target = server_app.MODEL_ROOT / artifact.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content[artifact.name])
+        progress(1.0)
+        return target
+
+    monkeypatch.setattr(server_app, "download_artifact", fake_download)
+    job = server_app.Job("job", ["track.wav"], ["vocals"])
+    asyncio.run(server_app.ensure_model_artifacts(job, model, 1, 1))
+
+    assert (server_app.MODEL_ROOT / "runtime-name.ckpt").read_bytes() == checkpoint
+    assert (server_app.MODEL_ROOT / "runtime-name.yaml").read_bytes() == config
+    assert server_app.model_artifacts_ready(model) is True
+
+
+def test_registry_uses_dynamic_typed_capabilities_and_exact_bindings():
+    from stem_separator_server.model_registry import ModelRegistry
+
+    converted = ModelRegistry._convert({
+        "schema": 3,
+        "generated_at": "2026-08-16",
+        "capabilities": {
+            "accordion": {"label": "Accordion", "kind": "stem", "family": "instrument"},
+            "hihat": {"label": "Hi-hat", "kind": "stem", "family": "drums"},
+            "denoise": {"label": "Denoise", "kind": "transform", "family": "restoration"},
+        },
+        "product_profiles": {
+            "stem_separator": {
+                "promoted": ["accordion"],
+                "browse_kinds": ["stem", "complement"],
+            },
+        },
+        "models": [{
+            "id": "dynamic-model",
+            "name": "Dynamic model",
+            "tasks": ["accordion", "hihat", "denoise"],
+            "availability": {"state": "public_weights", "artifacts": []},
+            "backends": {
+                "audio_separator": {
+                    "state": "validated",
+                    "validated": True,
+                    "model_filename": "dynamic.ckpt",
+                    "outputs": [
+                        {"runtime_key": "accordion", "capability": "accordion"},
+                        {"runtime_key": "hh", "capability": "hihat"},
+                        {"runtime_key": "noise", "capability": "denoise"},
+                    ],
+                },
+            },
+        }],
+        "recommendations": {
+            capability: {"model": "dynamic-model", "alternatives": []}
+            for capability in ("accordion", "hihat", "denoise")
+        },
+    })
+
+    registry = object.__new__(ModelRegistry)
+    registry.catalog = converted
+    assert registry.stems() == ["accordion", "hihat"]
+    assert registry.plan(["hihat"])[0].runtime_key("hihat") == "hh"
+    assert converted["productProfile"]["promoted"] == ["accordion"]
+
+
+def test_server_consumes_only_ready_entries_from_generated_product_catalogue():
+    from stem_separator_server.model_registry import ModelRegistry
+
+    def ready_contracts(capability, runtime_key):
+        return [{
+            "id": "audio_separator",
+            "reference": "dynamic.ckpt",
+            "state": "validated",
+            "validated": True,
+            "installable": True,
+            "ready": True,
+            "stable": True,
+            "outputs": [{"runtime_key": runtime_key, "capability": capability}],
+            "artifacts": [],
+        }]
+    converted = ModelRegistry._convert({
+        "schema": 1,
+        "policy": "stem-separator-v1",
+        "generated_at": "2026-08-16",
+        "promoted": ["hihat", "denoise"],
+        "groups": ["rhythm", "other"],
+        "capabilities": [
+            {
+                "id": "hihat", "label": "Hi-hat", "kind": "stem", "group": "rhythm",
+                "available": True,
+                "recommendation": {"model": "dynamic-model"},
+                "backends": ready_contracts("hihat", "hh"),
+            },
+            {
+                "id": "denoise", "label": "Denoise", "kind": "stem", "group": "other",
+                "available": False,
+                "recommendation": {"model": "dynamic-model"},
+                "backends": [],
+            },
+        ],
+        "multitrack": None,
+        "models": {
+            "dynamic-model": {
+                "name": "Dynamic model",
+                "status": "specialist",
+                "availability": {"license": "example"},
+                "backends": {"audio_separator": {"outputs": []}},
+            },
+        },
+        "readiness": {},
+    })
+
+    registry = object.__new__(ModelRegistry)
+    registry.catalog = converted
+    assert registry.stems() == ["hihat"]
+    assert registry.plan(["hihat"])[0].runtime_key("hihat") == "hh"
+    assert converted["productProfile"] == {
+        "promoted": ["hihat"],
+        "browseKinds": ["stem", "complement"],
+        "groups": ["rhythm", "other"],
+        "policy": "stem-separator-v1",
+    }
+
+
+def test_product_catalogue_rejects_available_but_unstable_contract():
+    from stem_separator_server.model_registry import ModelRegistry
+
+    with pytest.raises(ValueError, match="no ready audio-separator outputs"):
+        ModelRegistry._convert({
+            "schema": 1,
+            "generated_at": "2026-08-16",
+            "promoted": ["vocals"],
+            "groups": ["voice"],
+            "capabilities": [{
+                "id": "vocals",
+                "label": "Vocals",
+                "kind": "stem",
+                "group": "voice",
+                "available": True,
+                "recommendation": {"model": "untested"},
+                "backends": [{
+                    "id": "audio_separator",
+                    "reference": "untested.ckpt",
+                    "ready": True,
+                    "stable": False,
+                    "outputs": [{"runtime_key": "vocals", "capability": "vocals"}],
+                    "artifacts": [],
+                }],
+            }],
+            "models": {"untested": {"name": "Untested", "availability": {}, "backends": {}}},
+            "multitrack": None,
+        })
+
+
+def test_output_matching_is_exact_and_uses_runtime_key(tmp_path):
+    from stem_separator_server.app import matching_output
+
+    (tmp_path / "song_hihat_(Ride)_model.wav").write_bytes(b"ride")
+    hh = tmp_path / "song_(HH)_model.wav"
+    hh.write_bytes(b"hh")
+    (tmp_path / "song_(Crash)_model.wav").write_bytes(b"crash")
+
+    assert matching_output(tmp_path, "hh") == hh
+    assert matching_output(tmp_path, "hihat") is None
 
 
 def test_background_upload_can_be_promoted_to_a_job(tmp_path, monkeypatch):
@@ -310,11 +507,17 @@ def test_multitrack_is_an_explicit_special_case(tmp_path, monkeypatch):
 def test_multitrack_stems_follow_the_recommended_model(tmp_path, monkeypatch):
     server_app = load_app(tmp_path, monkeypatch)
     freeze_registry(server_app, monkeypatch)
-    server_app.REGISTRY.catalog["recommendations"]["multitrack_6"] = "htdemucs-ft"
-    selected = server_app.REGISTRY.catalog["models"]["htdemucs-ft"]["stems"]
+    server_app.REGISTRY.catalog["models"]["compact"] = {
+        "name": "Compact Multi-Track",
+        "filename": "compact.yaml",
+        "stems": ["vocals", "drums", "bass", "other"],
+        "bindings": {"vocals": "vocals", "drums": "drums", "bass": "bass", "other": "other"},
+    }
+    server_app.REGISTRY.catalog["recommendations"]["multitrack"] = "compact"
+    selected = server_app.REGISTRY.catalog["models"]["compact"]["stems"]
     multitrack = server_app.REGISTRY.plan(selected, multi_track=True)
     assert len(multitrack) == 1
-    assert multitrack[0].filename == "htdemucs_ft.yaml"
+    assert multitrack[0].filename == "compact.yaml"
     assert multitrack[0].stems == tuple(selected)
 
 
@@ -350,6 +553,74 @@ def test_multiple_files_are_accepted_and_return_named_outputs(tmp_path, monkeypa
     assert job["status"] == "complete", job
     assert job["file_count"] == 2
     assert {output["sourceName"] for output in job["outputs"]} == {"first.wav", "second.wav"}
+
+
+def test_model_failure_preserves_successful_requested_outputs(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    from fastapi.testclient import TestClient
+
+    async def partly_failing_command(command, job, progress_range=None, **kwargs):
+        if command[0] == "ffmpeg":
+            return
+        if command[command.index("--model_filename") + 1] == "BS-Roformer-SW.ckpt":
+            raise RuntimeError("synthetic bass model failure")
+        output_dir = server_app.Path(command[command.index("--output_dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "track_(Vocals)_model.wav").write_bytes(b"RIFFvocals")
+        # An unrequested raw output must never leak into the delivered files.
+        (output_dir / "track_(Instrumental)_model.wav").write_bytes(b"RIFFinstrumental")
+
+    monkeypatch.setattr(server_app, "run_command", partly_failing_command)
+    with TestClient(server_app.app) as client:
+        response = client.post(
+            "/api/jobs",
+            files={"file": ("track.wav", b"RIFFinput", "audio/wav")},
+            data={"stems": "vocals,bass"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in {"complete", "failed"}:
+                break
+            import time
+
+            time.sleep(0.01)
+
+    assert job["status"] == "complete", job
+    assert [output["stem"] for output in job["outputs"]] == ["vocals"]
+    assert job["warnings"]
+    assert "warning" in job["detail"].lower()
+
+
+def test_job_fails_only_when_no_requested_output_is_produced(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    from fastapi.testclient import TestClient
+
+    async def failing_command(command, job, progress_range=None, **kwargs):
+        raise RuntimeError("synthetic model failure")
+
+    monkeypatch.setattr(server_app, "run_command", failing_command)
+    with TestClient(server_app.app) as client:
+        response = client.post(
+            "/api/jobs",
+            files={"file": ("track.wav", b"RIFFinput", "audio/wav")},
+            data={"stems": "vocals"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in {"complete", "failed"}:
+                break
+            import time
+
+            time.sleep(0.01)
+
+    assert job["status"] == "failed"
+    assert job["outputs"] == []
+    assert job["warnings"]
+    assert job["error"].startswith("No requested outputs could be produced.")
 
 
 def test_job_can_be_cancelled(tmp_path, monkeypatch):

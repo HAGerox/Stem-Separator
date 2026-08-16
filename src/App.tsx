@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
+  ChevronDown,
   CircleAlert,
   CircleCheck,
   Download,
@@ -16,6 +17,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Search,
   Square,
   Upload,
   X,
@@ -24,35 +26,22 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { availableStems, buildModelPlan, loadCatalog, recommendedMultiTrackModel, recommendedMultiTrackStems } from "./lib/catalog";
+import { availableCapabilities, availableStems, buildModelPlan, capabilityLabel, loadCatalog, recommendedMultiTrackModel, recommendedMultiTrackStems } from "./lib/catalog";
 import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, quitApp, requiredModelDownloads, resolveInputs, revealPath, setSeparationActive } from "./lib/native";
 import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
 import type { ServerUploadHandle } from "./lib/server";
 import { serverMode } from "./lib/runtime";
-import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
+import type { Catalog, CatalogCapability, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
 
 type StemOption = {
   id: StemId;
   label: string;
-  description: string;
   glyph: string;
-  primary: boolean;
+  group: string;
+  groupLabel: string;
 };
 
-const STEMS: StemOption[] = [
-  { id: "vocals", label: "Vocals", description: "Lead and backing voices", glyph: "voice", primary: true },
-  { id: "instrumental", label: "Instrumental", description: "Everything except vocals", glyph: "wave", primary: true },
-  { id: "drums", label: "Drums", description: "Kicks, snares and percussion", glyph: "drum", primary: true },
-  { id: "bass", label: "Bass", description: "Bass guitar and synth bass", glyph: "bass", primary: true },
-  { id: "guitar", label: "Guitar", description: "Electric and acoustic guitar", glyph: "guitar", primary: false },
-  { id: "piano", label: "Piano", description: "Piano and keyboard parts", glyph: "keys", primary: false },
-  { id: "kick", label: "Kick", description: "Kick drum and low-end hits", glyph: "drum", primary: false },
-  { id: "snare", label: "Snare", description: "Snare and clap transients", glyph: "drum", primary: false },
-  { id: "toms", label: "Toms", description: "Rack and floor toms", glyph: "drum", primary: false },
-  { id: "hihat", label: "Hi-hat", description: "Open and closed hi-hats", glyph: "drum", primary: false },
-  { id: "cymbals", label: "Cymbals", description: "Crashes, rides and cymbals", glyph: "drum", primary: false },
-  { id: "other", label: "Other", description: "Multi-Track remainder", glyph: "dots", primary: false },
-];
+const PROMOTED_STEMS = ["vocals", "instrumental", "drums", "bass", "guitar", "piano"];
 
 function extension(name: string) {
   const value = name.split(".").pop();
@@ -71,8 +60,30 @@ function formatTime(seconds?: number) {
   return `${mins}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
-function stemLabel(stem: StemId) {
-  return STEMS.find((item) => item.id === stem)?.label || stem;
+function stemLabel(stem: StemId, catalog: Catalog | null = null) {
+  return capabilityLabel(catalog, stem);
+}
+
+function capabilityGlyph(capability: CatalogCapability) {
+  if (capability.glyph) return capability.glyph;
+  if (/vocal|voice|choir|dialogue/.test(capability.id)) return "voice";
+  if (capability.id === "instrumental") return "wave";
+  if (/drum|kick|snare|tom|hat|cymbal|ride|crash|percussion/.test(capability.id)) return "drum";
+  if (/piano|keys|organ/.test(capability.id)) return "keys";
+  if (/bass/.test(capability.id)) return "bass";
+  if (/guitar|banjo|ukulele/.test(capability.id)) return "guitar";
+  if (capability.id === "other") return "dots";
+  return "generic";
+}
+
+function stemOption(capability: CatalogCapability): StemOption {
+  return {
+    id: capability.id,
+    label: capability.label,
+    glyph: capabilityGlyph(capability),
+    group: capability.group,
+    groupLabel: capability.groupLabel,
+  };
 }
 
 function StemGlyph({ type }: { type: string }) {
@@ -262,10 +273,34 @@ function SelectView({
   catalog: Catalog | null;
   dragging: boolean;
 }) {
-  const supportedStems = useMemo(() => new Set(availableStems(catalog)), [catalog]);
-  const visibleStems = STEMS.filter((stem) => stem.id !== "other" && supportedStems.has(stem.id));
+  const [showOtherStems, setShowOtherStems] = useState(false);
+  const [stemSearch, setStemSearch] = useState("");
+  const capabilities = useMemo(() => availableCapabilities(catalog), [catalog]);
+  const capabilityById = useMemo(() => new Map(capabilities.map((capability) => [capability.id, capability])), [capabilities]);
+  const promotedIds = catalog?.promoted?.length ? catalog.promoted : PROMOTED_STEMS;
+  const promotedStems = promotedIds.flatMap((id) => {
+    const capability = capabilityById.get(id);
+    return capability ? [stemOption(capability)] : [];
+  });
+  const otherStems = capabilities
+    .filter((capability) => !promotedIds.includes(capability.id) && capability.id !== "other")
+    .map(stemOption);
+  const normalizedSearch = stemSearch.trim().toLocaleLowerCase();
+  const filteredOtherStems = otherStems.filter((stem) => !normalizedSearch
+    || stem.label.toLocaleLowerCase().includes(normalizedSearch)
+    || stem.id.toLocaleLowerCase().includes(normalizedSearch)
+    || stem.groupLabel.toLocaleLowerCase().includes(normalizedSearch));
+  const groupedOtherStems = filteredOtherStems.reduce((groups, stem) => {
+    const current = groups.get(stem.groupLabel) || [];
+    current.push(stem);
+    groups.set(stem.groupLabel, current);
+    return groups;
+  }, new Map<string, StemOption[]>());
   const multiTrackModel = useMemo(() => recommendedMultiTrackModel(catalog), [catalog]);
-  const multiTrackStems = multiTrackModel?.stems || [];
+  const multiTrackStems = useMemo(() => recommendedMultiTrackStems(catalog), [catalog]);
+  const selectionReady = !!catalog && selected.length > 0 && (multiTrack
+    ? multiTrackStems.length > 0
+    : selected.every((stem) => capabilityById.has(stem)) && buildModelPlan(catalog, selected).length > 0);
 
   const toggleStem = (stem: StemId) => {
     if (multiTrack) {
@@ -302,16 +337,35 @@ function SelectView({
 
         <section className="stem-picker">
           <h1>Choose your stems</h1>
-          <div className="stem-grid">
-            {visibleStems.map((stem) => <StemCard key={stem.id} stem={stem} prominent={stem.id === "vocals" || stem.id === "instrumental"} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
+          <div className="stem-grid promoted-stem-grid">
+            {promotedStems.map((stem) => <StemCard key={stem.id} stem={stem} prominent active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}
           </div>
+
+          {otherStems.length > 0 && <section className={`other-stems-section ${showOtherStems ? "open" : ""}`}>
+            <button className="other-stems-toggle" onClick={() => setShowOtherStems((shown) => !shown)} aria-expanded={showOtherStems}>
+              <span><strong>Other stems</strong><small>{otherStems.length} available</small></span>
+              <ChevronDown size={17} />
+            </button>
+            {showOtherStems && <div className="other-stems-browser">
+              <label className="stem-search">
+                <Search size={15} />
+                <input value={stemSearch} onChange={(event) => setStemSearch(event.target.value)} placeholder="Search stems" autoFocus />
+              </label>
+              {groupedOtherStems.size > 0
+                ? [...groupedOtherStems].map(([groupLabel, stems]) => <section className="stem-group" key={groupLabel}>
+                  <h2>{groupLabel}</h2>
+                  <div className="other-stem-grid">{stems.map((stem) => <StemCard key={stem.id} stem={stem} active={!multiTrack && selected.includes(stem.id)} onClick={() => toggleStem(stem.id)} />)}</div>
+                </section>)
+                : <p className="no-stems-found">No stems match “{stemSearch.trim()}”.</p>}
+            </div>}
+          </section>}
 
           {multiTrackModel && <section className="multitrack-section" aria-label="Multi-Track">
             <button className={`multitrack-option ${multiTrack ? "selected" : ""}`} aria-pressed={multiTrack} onClick={chooseMultiTrack}>
               <span className="multitrack-option-icon"><StemGlyph type="multi" /></span>
               <span className="multitrack-option-copy">
                 <strong>Multi-Track</strong>
-                <small>{multiTrackStems.map(stemLabel).join(" · ")} — add back up to the original.</small>
+                <small>{multiTrackStems.map((stem) => stemLabel(stem, catalog)).join(" · ")}</small>
               </span>
             </button>
           </section>}
@@ -319,7 +373,7 @@ function SelectView({
       </div>
 
       <footer className="selection-action-bar">
-        <button className="primary-button start-button" disabled={selected.length === 0} onClick={onStart}>
+        <button className="primary-button start-button" disabled={!selectionReady} onClick={onStart}>
           {multiTrack ? "Create Multi-Track" : `Separate ${selected.length || ""} ${selected.length === 1 ? "stem" : "stems"}`}
         </button>
       </footer>
@@ -332,12 +386,14 @@ function ProcessingView({
   files,
   plan,
   plannedDownloads,
+  catalog,
   onStop,
 }: {
   progress: JobProgress;
   files: InputFile[];
   plan: ReturnType<typeof buildModelPlan>;
   plannedDownloads: number[];
+  catalog: Catalog | null;
   onStop: () => void;
 }) {
   const displayedProgress = useSmoothedProgress(progress);
@@ -371,7 +427,7 @@ function ProcessingView({
     ...visibleDownloads.map((modelIndex) => ({
       id: `download-${modelIndex}`,
       label: "Downloading the separation model",
-      detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · needed for ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "this separation"}`,
+      detail: `${plan[modelIndex - 1]?.modelName || "Separation model"} · needed for ${plan[modelIndex - 1]?.stems.map((stem) => stemLabel(stem, catalog)).join(" + ") || "this separation"}`,
       phase: "download" as const,
       modelIndex,
     })),
@@ -384,7 +440,7 @@ function ProcessingView({
     }] : []),
     ...plan.map((run, index) => ({
       id: `separate-${index + 1}`,
-      label: `Separating ${run.stems.map(stemLabel).join(" + ")}`,
+      label: `Separating ${run.stems.map((stem) => stemLabel(stem, catalog)).join(" + ")}`,
       detail: `${run.modelName} · ${serverMode ? "running on this server" : "running locally"}`,
       phase: "separate" as const,
       modelIndex: index + 1,
@@ -396,7 +452,7 @@ function ProcessingView({
       phase: "finish" as const,
       modelIndex: plan.length,
     },
-  ], [files, includesUpload, needsAlignment, needsVideoPreparation, plan, visibleDownloads]);
+  ], [catalog, files, includesUpload, needsAlignment, needsVideoPreparation, plan, visibleDownloads]);
   const phase = presentedProgress.phase || (presentedProgress.stage.startsWith("Uploading ") ? "upload" : presentedProgress.stage.startsWith("Downloading ") ? "download" : presentedProgress.stage === "Preparing video" ? "prepare" : presentedProgress.overall >= 98 || presentedProgress.stage === "Finishing up" || presentedProgress.stage.startsWith("Creating ") ? "finish" : "separate");
   const activeId = phase === "upload"
     ? "upload"
@@ -527,7 +583,7 @@ function Waveform({ seed, current, duration, onSeek }: { seed: string; current: 
   >{bars.map((height, index) => <i className={(index + 1) / bars.length <= played ? "played" : ""} key={index} style={{ height: `${height}%` }} />)}</div>;
 }
 
-function StemPlayer({ output }: { output: OutputStem }) {
+function StemPlayer({ output, catalog }: { output: OutputStem; catalog: Catalog | null }) {
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -551,18 +607,18 @@ function StemPlayer({ output }: { output: OutputStem }) {
   };
 
   return (
-    <div className={`result-row ${inTauri ? "file-draggable" : ""}`} onMouseDown={beginFileDrag} title={inTauri ? `Drag ${stemLabel(output.stem)} to another app` : undefined}>
+    <div className={`result-row ${inTauri ? "file-draggable" : ""}`} onMouseDown={beginFileDrag} title={inTauri ? `Drag ${stemLabel(output.stem, catalog)} to another app` : undefined}>
       <audio ref={audioRef} src={playableUrl(output.path)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onTimeUpdate={(event) => setCurrent(event.currentTarget.currentTime)} />
-      <button className="play-button" onClick={toggle} aria-label={`${playing ? "Pause" : "Play"} ${stemLabel(output.stem)}`}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-      <div className="result-label"><strong>{stemLabel(output.stem)}</strong><span>{output.sourceName} · {output.isVideo ? "Video" : "WAV"}</span></div>
+      <button className="play-button" onClick={toggle} aria-label={`${playing ? "Pause" : "Play"} ${stemLabel(output.stem, catalog)}`}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
+      <div className="result-label"><strong>{stemLabel(output.stem, catalog)}</strong><span>{output.sourceName} · {output.isVideo ? "Video" : "WAV"}</span></div>
       <Waveform seed={output.name} current={current} duration={output.durationSeconds || audioRef.current?.duration || 0} onSeek={seek} />
       <span className="player-time">{formatTime(current)} / {formatTime(output.durationSeconds)}</span>
-      {serverMode && <a className="stem-download" href={`${output.path}?download=1`} download={output.name} aria-label={`Download ${stemLabel(output.stem)}`} title={`Download ${output.name}`}><Download size={15} /></a>}
+      {serverMode && <a className="stem-download" href={`${output.path}?download=1`} download={output.name} aria-label={`Download ${stemLabel(output.stem, catalog)}`} title={`Download ${output.name}`}><Download size={15} /></a>}
     </div>
   );
 }
 
-function ResultsView({ result, onReset, onBack }: { result: ProcessResult; onReset: () => void; onBack: () => void }) {
+function ResultsView({ result, catalog, onReset, onBack }: { result: ProcessResult; catalog: Catalog | null; onReset: () => void; onBack: () => void }) {
   const visibleOutputs = useMemo(() => {
     const preferred = new Map<string, OutputStem>();
     for (const output of result.outputs) {
@@ -582,7 +638,7 @@ function ResultsView({ result, onReset, onBack }: { result: ProcessResult; onRes
         <p>{visibleOutputs.length} {visibleOutputs.length === 1 ? "stem" : "stems"} ready{hasVideo ? " · Video versions shown" : " · WAV"}</p>
       </section>
       {result.usedDemoMode && <div className="warning-banner"><CircleAlert size={18} /><span><strong>Preview processing was used.</strong> {serverMode ? "Choose your own files to process them on this server." : "Run the desktop app for local separation."}</span></div>}
-      <section className="results-list">{visibleOutputs.map((output) => <StemPlayer key={`${output.path}-${output.stem}-${output.isVideo}`} output={output} />)}</section>
+      <section className="results-list">{visibleOutputs.map((output) => <StemPlayer key={`${output.path}-${output.stem}-${output.isVideo}`} output={output} catalog={catalog} />)}</section>
       <section className="result-actions">
         {serverMode
           ? <a className="primary-button result-download-all" href={result.outputDirectory} download><Download size={17} /> Download all stems</a>
@@ -821,6 +877,11 @@ export default function App() {
 
   const start = async () => {
     if (starting.current || !catalog || !files.length || !selected.length) return;
+    const plannedStems = new Set(plan.flatMap((run) => run.stems));
+    if (plan.length === 0 || selected.some((stem) => !plannedStems.has(stem))) {
+      setError("One or more selected stems are no longer available. Choose from the currently available stems and try again.");
+      return;
+    }
     starting.current = true;
     cancelled.current = false;
     let nextDownloads: number[] = [];
@@ -850,7 +911,7 @@ export default function App() {
       overall: uploadPending ? 1 + 4 * serverUpload!.snapshot().progress / 100 : 1,
       fileIndex: 0,
       fileCount: files.length,
-      stage: uploadPending ? "Uploading files" : firstDownload ? "Downloading the separation model" : serverMode ? "Starting separation" : startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map(stemLabel).join(" + ") || "audio"}`,
+      stage: uploadPending ? "Uploading files" : firstDownload ? "Downloading the separation model" : serverMode ? "Starting separation" : startsWithVideo ? "Preparing video" : `Separating ${plan[0]?.stems.map((stem) => stemLabel(stem, catalog)).join(" + ") || "audio"}`,
       detail: uploadPending
         ? files.length === 1 ? `Sending ${files[0].name} to this server` : `Sending ${files.length} files to this server`
         : firstDownload ? `${plan[firstDownload - 1]?.modelName || "Separation model"} · needed for this separation` : serverMode ? "The files are ready on this server" : startsWithVideo ? "Extracting the soundtrack for separation" : `${plan[0]?.modelName || "Separation model"} · running locally`,
@@ -888,7 +949,7 @@ export default function App() {
       previewTimer.current = window.setInterval(() => {
         value = Math.min(92, value + 0.9);
         const modelIndex = Math.min(plan.length, Math.max(1, Math.ceil((value / 92) * plan.length)));
-        setProgress({ jobId: "preview", overall: value, fileIndex: 0, fileCount: files.length, stage: `Separating ${plan[modelIndex - 1]?.stems.map(stemLabel).join(" + ") || "audio"}`, detail: plan[modelIndex - 1]?.modelName || "Automatic model selection", modelIndex, modelCount: plan.length, phase: "separate", phaseProgress: Math.min(100, value / 92 * plan.length * 100 - (modelIndex - 1) * 100) });
+        setProgress({ jobId: "preview", overall: value, fileIndex: 0, fileCount: files.length, stage: `Separating ${plan[modelIndex - 1]?.stems.map((stem) => stemLabel(stem, catalog)).join(" + ") || "audio"}`, detail: plan[modelIndex - 1]?.modelName || "Automatic model selection", modelIndex, modelCount: plan.length, phase: "separate", phaseProgress: Math.min(100, value / 92 * plan.length * 100 - (modelIndex - 1) * 100) });
       }, 120);
       previewCompletion.current = window.setTimeout(() => {
         if (previewTimer.current) window.clearInterval(previewTimer.current);
@@ -1007,8 +1068,8 @@ export default function App() {
       <Header update={update} updating={updating} updateProgress={updateProgress} onUpdate={applyUpdate} />
       {view === "drop" && <DropView onPick={pick} dragging={dragging} />}
       {view === "select" && <SelectView files={files} selected={selected} multiTrack={multiTrack} setSelected={setSelected} setMultiTrack={setMultiTrack} onRemove={removeFile} onAdd={() => pick(false)} onStart={start} onBack={goBack} catalog={catalog} dragging={dragging} />}
-      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} plannedDownloads={plannedDownloads} onStop={() => setConfirmStop(true)} />}
-      {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
+      {view === "processing" && <ProcessingView progress={progress} files={files} plan={plan} plannedDownloads={plannedDownloads} catalog={catalog} onStop={() => setConfirmStop(true)} />}
+      {view === "results" && result && <ResultsView result={result} catalog={catalog} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
       {view === "processing" && confirmStop && <ConfirmStop stopping={stopping} onCancel={() => setConfirmStop(false)} onConfirm={stop} />}
       {view === "processing" && exitIntent && <ConfirmExit intent={exitIntent} stopping={stopping} onCancel={() => setExitIntent(null)} onConfirm={exitAfterStopping} />}

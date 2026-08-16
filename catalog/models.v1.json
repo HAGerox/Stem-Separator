@@ -1,55 +1,22 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-13T00:00:00Z",
-  "sourceLabel": "Bundled fallback from HAGerox/Stem-Separator-Models · audio-separator compatible",
-  "recommendations": {
-    "vocals": "audio-separator:becruily-deux",
-    "instrumental": "audio-separator:gabox-fv7z",
-    "drums": "audio-separator:bs-roformer-sw",
-    "bass": "audio-separator:bs-roformer-sw",
-    "guitar": "audio-separator:bs-roformer-sw",
-    "piano": "audio-separator:bs-roformer-sw",
-    "kick": "audio-separator:jarredou-drumsep-5",
-    "snare": "audio-separator:jarredou-drumsep-5",
-    "toms": "audio-separator:jarredou-drumsep-5",
-    "hihat": "audio-separator:jarredou-drumsep-5",
-    "cymbals": "audio-separator:jarredou-drumsep-5",
-    "other": "audio-separator:bs-roformer-sw",
-    "multitrack_4": "audio-separator:htdemucs-ft",
-    "multitrack_6": "audio-separator:bs-roformer-sw"
-  },
-  "sources": [
-    {
-      "name": "python-audio-separator",
-      "url": "https://github.com/nomadkaraoke/python-audio-separator",
-      "kind": "runtime-registry"
-    },
-    {
-      "name": "MVSep algorithms",
-      "url": "https://mvsep.com/en/algorithms",
-      "kind": "benchmark-and-capability-reference"
-    },
-    {
-      "name": "Community separation guide",
-      "url": "https://deton24.github.io/separation-guide/",
-      "kind": "qualitative-reference"
-    }
-  ],
+  "generatedAt": "2026-08-16",
+  "sourceLabel": "HAGerox/Stem-Separator-Models · stem-separator-v1",
   "models": [
     {
       "id": "audio-separator:becruily-deux",
       "filename": "becruily_deux.ckpt",
       "name": "Becruily Deux",
-      "provider": "audio-separator",
-      "runtime": "local",
-      "architecture": "MelBand RoFormer",
+      "architecture": "mel_band_roformer",
       "stems": ["vocals", "instrumental"],
-      "quality": 96,
-      "speed": 54,
+      "quality": 90,
+      "speed": 50,
       "memory": "high",
-      "note": "Registry-recommended vocals model, provisioned directly from its verified public artifacts.",
-      "source": "HAGerox/Stem-Separator-Models",
+      "note": "Selected by stem-separator-v1.",
+      "source": "HAGerox/Stem-Separator-Models product catalog",
       "license": "CC-BY-NC-4.0",
+      "status": "current",
+      "runtimeValidated": true,
       "artifacts": [
         {
           "name": "becruily_deux.ckpt",
@@ -62,67 +29,117 @@
           "sha256": "bb3ea9bce37ca96d63568490d5a92d7e41df3d7726788b6970c10d89eb62d902"
         }
       ],
-      "status": "verified"
-    },
-    {
-      "id": "audio-separator:gabox-fv7z",
-      "filename": "mel_band_roformer_instrumental_fv7z_gabox.ckpt",
-      "name": "MelBand RoFormer Inst Gabox Fv7z",
-      "provider": "audio-separator",
-      "runtime": "local",
-      "architecture": "MelBand RoFormer",
-      "stems": ["instrumental"],
-      "quality": 96,
-      "speed": 50,
-      "memory": "high",
-      "note": "Best audio-separator-compatible instrumental choice from the registry recommendation set.",
-      "source": "HAGerox/Stem-Separator-Models",
-      "status": "verified"
+      "outputs": [
+        { "capability": "vocals", "runtimeKey": "Vocals", "label": "Vocals" },
+        { "capability": "instrumental", "runtimeKey": "Instrumental", "label": "Instrumental" }
+      ]
     },
     {
       "id": "audio-separator:bs-roformer-sw",
       "filename": "BS-Roformer-SW.ckpt",
       "name": "BS RoFormer SW 6-Stem",
-      "provider": "audio-separator",
-      "runtime": "local",
-      "architecture": "BS RoFormer",
-      "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
-      "quality": 94,
+      "architecture": "bs_roformer",
+      "stems": ["drums", "bass", "guitar", "piano", "other", "vocals"],
+      "quality": 90,
       "speed": 50,
       "memory": "high",
-      "note": "Registry recommendation for the best compatible six-stem and instrument pass.",
-      "source": "HAGerox/Stem-Separator-Models",
-      "status": "verified"
+      "note": "Selected by stem-separator-v1.",
+      "source": "HAGerox/Stem-Separator-Models product catalog",
+      "license": "unknown",
+      "status": "current",
+      "runtimeValidated": true,
+      "artifacts": [
+        {
+          "name": "BS-Roformer-SW.ckpt",
+          "url": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/BS-Roformer-SW.ckpt",
+          "sha256": "24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e"
+        },
+        {
+          "name": "BS-Roformer-SW.yaml",
+          "url": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/BS-Roformer-SW.yaml",
+          "sha256": "b558996f1e25eb48798bd6502505a5de94c4f966d6edfb1a0420f06cc40b501a"
+        }
+      ],
+      "outputs": [
+        { "capability": "drums", "runtimeKey": "drums", "label": "Drums" },
+        { "capability": "bass", "runtimeKey": "bass", "label": "Bass" },
+        { "capability": "guitar", "runtimeKey": "guitar", "label": "Guitar" },
+        { "capability": "piano", "runtimeKey": "piano", "label": "Piano" },
+        { "capability": "other", "runtimeKey": "other", "label": "Other" },
+        { "capability": "vocals", "runtimeKey": "vocals", "label": "Vocals" }
+      ]
     },
     {
-      "id": "audio-separator:jarredou-drumsep-5",
+      "id": "audio-separator:jarredou-drumsep-6",
       "filename": "MDX23C-DrumSep-aufr33-jarredou.ckpt",
-      "name": "Jarredou DrumSep 5",
-      "provider": "audio-separator",
-      "runtime": "local",
-      "architecture": "MDX23C",
-      "stems": ["kick", "snare", "toms", "hihat", "cymbals"],
-      "quality": 93,
-      "speed": 55,
+      "name": "MDX23C DrumSep 6-Stem",
+      "architecture": "mdx23c",
+      "stems": ["crash", "hihat", "kick", "ride", "snare", "toms"],
+      "quality": 90,
+      "speed": 50,
       "memory": "high",
-      "note": "Registry recommendation for detailed drum sub-stems.",
-      "source": "HAGerox/Stem-Separator-Models",
-      "status": "verified"
-    },
-    {
-      "id": "audio-separator:htdemucs-ft",
-      "filename": "htdemucs_ft.yaml",
-      "name": "Demucs v4 fine-tuned",
-      "provider": "audio-separator",
-      "runtime": "local",
-      "architecture": "Demucs",
-      "stems": ["vocals", "drums", "bass", "other"],
-      "quality": 86,
-      "speed": 60,
-      "memory": "high",
-      "note": "Strong four-stem fallback with good drum and bass separation.",
-      "source": "HAGerox/Stem-Separator-Models",
-      "status": "verified"
+      "note": "Selected by stem-separator-v1.",
+      "source": "HAGerox/Stem-Separator-Models product catalog",
+      "license": "unknown",
+      "status": "specialist",
+      "runtimeValidated": true,
+      "artifacts": [
+        {
+          "name": "mdx23c_drumsep_6stem_aufr33_jarredou.ckpt",
+          "url": "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/52b829140b03681784e03764600ca7f46d85fa86/mdx23c/mdx23c_drumsep_6stem_aufr33_jarredou.ckpt",
+          "sha256": "d2a4aa53eb584d21eead358a4e66d1882ad182911be018f052b5da73be9096d0"
+        },
+        {
+          "name": "config_drumsep_mdx23c.yaml",
+          "url": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/config_drumsep_mdx23c.yaml",
+          "sha256": "17d1649a227f841165bdb4c11a42082898192a1ea3ceab7e7e0b9293d6589dd6"
+        }
+      ],
+      "outputs": [
+        { "capability": "crash", "runtimeKey": "crash", "label": "Crash" },
+        { "capability": "hihat", "runtimeKey": "hh", "label": "Hi-hat" },
+        { "capability": "kick", "runtimeKey": "kick", "label": "Kick" },
+        { "capability": "ride", "runtimeKey": "ride", "label": "Ride" },
+        { "capability": "snare", "runtimeKey": "snare", "label": "Snare" },
+        { "capability": "toms", "runtimeKey": "toms", "label": "Toms" }
+      ]
     }
-  ]
+  ],
+  "recommendations": {
+    "vocals": "audio-separator:becruily-deux",
+    "instrumental": "audio-separator:becruily-deux",
+    "drums": "audio-separator:bs-roformer-sw",
+    "bass": "audio-separator:bs-roformer-sw",
+    "guitar": "audio-separator:bs-roformer-sw",
+    "piano": "audio-separator:bs-roformer-sw",
+    "crash": "audio-separator:jarredou-drumsep-6",
+    "hihat": "audio-separator:jarredou-drumsep-6",
+    "kick": "audio-separator:jarredou-drumsep-6",
+    "ride": "audio-separator:jarredou-drumsep-6",
+    "snare": "audio-separator:jarredou-drumsep-6",
+    "toms": "audio-separator:jarredou-drumsep-6",
+    "other": "audio-separator:bs-roformer-sw",
+    "multitrack": "audio-separator:bs-roformer-sw"
+  },
+  "capabilities": {
+    "vocals": { "id": "vocals", "label": "Vocals", "kind": "stem", "group": "voice", "groupLabel": "Voices", "promoted": true },
+    "instrumental": { "id": "instrumental", "label": "Instrumental", "kind": "complement", "group": "other", "groupLabel": "Other stems", "promoted": true },
+    "drums": { "id": "drums", "label": "Drums", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": true },
+    "bass": { "id": "bass", "label": "Bass", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": true },
+    "guitar": { "id": "guitar", "label": "Guitar", "kind": "stem", "group": "guitar", "groupLabel": "Guitars", "promoted": true },
+    "piano": { "id": "piano", "label": "Piano", "kind": "stem", "group": "keys", "groupLabel": "Keys", "promoted": true },
+    "crash": { "id": "crash", "label": "Crash", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "hihat": { "id": "hihat", "label": "Hi-hat", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "kick": { "id": "kick", "label": "Kick", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "ride": { "id": "ride", "label": "Ride", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "snare": { "id": "snare", "label": "Snare", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "toms": { "id": "toms", "label": "Toms", "kind": "stem", "group": "rhythm", "groupLabel": "Rhythm & percussion", "promoted": false },
+    "other": { "id": "other", "label": "Other", "kind": "complement", "group": "other", "groupLabel": "Other stems", "promoted": false }
+  },
+  "promoted": ["vocals", "instrumental", "drums", "bass", "guitar", "piano"],
+  "groups": ["voice", "rhythm", "guitar", "keys", "orchestral", "other"],
+  "multiTrack": {
+    "modelId": "audio-separator:bs-roformer-sw",
+    "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"]
+  }
 }

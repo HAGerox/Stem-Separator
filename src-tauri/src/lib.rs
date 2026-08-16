@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -49,7 +49,16 @@ struct ModelRun {
     model_name: String,
     stems: Vec<String>,
     #[serde(default)]
+    outputs: Vec<ModelOutputBinding>,
+    #[serde(default)]
     artifacts: Vec<ModelArtifact>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ModelOutputBinding {
+    capability: String,
+    runtime_key: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -151,6 +160,10 @@ struct ActiveProcessGuard {
     pid: u32,
 }
 
+struct JobWorkspaceGuard {
+    path: PathBuf,
+}
+
 impl Drop for ActiveJobGuard {
     fn drop(&mut self) {
         if let Ok(mut active) = self.state.lock() {
@@ -168,6 +181,12 @@ impl Drop for ActiveProcessGuard {
                 active.pid = None;
             }
         }
+    }
+}
+
+impl Drop for JobWorkspaceGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -516,7 +535,10 @@ fn resolve_inputs(paths: Vec<String>) -> Result<Vec<InputFile>, String> {
     if files.is_empty() {
         return Err("No supported audio or video files were found.".into());
     }
-    if let Some(path) = files.iter().find(|path| is_video(path) && !has_audio_stream(path)) {
+    if let Some(path) = files
+        .iter()
+        .find(|path| is_video(path) && !has_audio_stream(path))
+    {
         return Err(silent_video_message(path));
     }
     Ok(files.iter().map(|path| describe_input(path)).collect())
@@ -560,6 +582,147 @@ fn safe_artifact_name(name: &str) -> Result<&str, String> {
             "The registry supplied an unsafe model filename: {name}"
         ))
     }
+}
+
+fn valid_artifact_metadata(artifact: &ModelArtifact) -> bool {
+    safe_artifact_name(&artifact.name).is_ok()
+        && artifact.url.starts_with("https://")
+        && artifact.sha256.len() == 64
+        && artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_model_weight(name: &str) -> bool {
+    matches!(
+        Path::new(name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("ckpt" | "pth" | "onnx" | "th")
+    )
+}
+
+fn runtime_weight_artifact(run: &ModelRun) -> Result<Option<&ModelArtifact>, String> {
+    if !is_model_weight(&run.model_filename) {
+        return Ok(None);
+    }
+    let candidates = run
+        .artifacts
+        .iter()
+        .filter(|artifact| is_model_weight(&artifact.name))
+        .collect::<Vec<_>>();
+    if let Some(exact) = candidates
+        .iter()
+        .find(|artifact| artifact.name == run.model_filename)
+    {
+        return Ok(Some(*exact));
+    }
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [artifact] => Ok(Some(*artifact)),
+        _ => Err(format!(
+            "The registry supplied multiple possible weight artifacts for {}, but none matches its runtime filename {}.",
+            run.model_name, run.model_filename
+        )),
+    }
+}
+
+fn runtime_config_artifact(run: &ModelRun) -> Result<Option<&ModelArtifact>, String> {
+    let checkpoint_stem = Path::new(&run.model_filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            format!(
+                "The registry model filename is invalid: {}",
+                run.model_filename
+            )
+        })?;
+    let expected_names = [
+        format!("{checkpoint_stem}.yaml"),
+        format!("{checkpoint_stem}.yml"),
+    ];
+    let candidates = run
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            matches!(
+                Path::new(&artifact.name)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase())
+                    .as_deref(),
+                Some("yaml" | "yml")
+            )
+        })
+        .collect::<Vec<_>>();
+    if let Some(exact) = candidates
+        .iter()
+        .find(|artifact| expected_names.iter().any(|name| name == &artifact.name))
+    {
+        return Ok(Some(*exact));
+    }
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [artifact] => Ok(Some(*artifact)),
+        _ => Err(format!(
+            "The registry supplied multiple possible configuration artifacts for {}, but none matches its runtime filename.",
+            run.model_name
+        )),
+    }
+}
+
+fn validate_model_run(run: &ModelRun) -> Result<(), String> {
+    safe_artifact_name(&run.model_filename)?;
+    if run.model_name.trim().is_empty() {
+        return Err("The registry supplied a model without a display name.".into());
+    }
+    if run
+        .artifacts
+        .iter()
+        .any(|artifact| !valid_artifact_metadata(artifact))
+    {
+        return Err(format!(
+            "The registry supplied invalid artifact metadata for {}.",
+            run.model_name
+        ));
+    }
+    runtime_weight_artifact(run)?;
+    runtime_config_artifact(run)?;
+    let mut capabilities = HashSet::new();
+    for output in &run.outputs {
+        if output.capability.trim().is_empty()
+            || output.runtime_key.trim().is_empty()
+            || output.capability != output.capability.trim()
+            || output.runtime_key != output.runtime_key.trim()
+            || output.runtime_key.chars().any(char::is_control)
+        {
+            return Err(format!(
+                "The registry supplied an invalid output binding for {}.",
+                run.model_name
+            ));
+        }
+        if !capabilities.insert(output.capability.as_str()) {
+            return Err(format!(
+                "The registry supplied more than one output binding for {} on {}.",
+                title_case(&output.capability),
+                run.model_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn runtime_key_for_capability<'a>(run: &'a ModelRun, capability: &'a str) -> Option<&'a str> {
+    if !run.stems.iter().any(|stem| stem == capability) {
+        return None;
+    }
+    if run.outputs.is_empty() {
+        return Some(capability);
+    }
+    run.outputs
+        .iter()
+        .find(|output| output.capability == capability)
+        .map(|output| output.runtime_key.as_str())
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -631,6 +794,45 @@ fn install_verified_part(
             "Could not finish installing model artifact {name}: {error}"
         )),
     }
+}
+
+fn stage_verified_artifact(
+    source: &Path,
+    target: &Path,
+    expected: &str,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let expected = expected.to_ascii_lowercase();
+    if source == target {
+        let actual = sha256_file(source)?;
+        return if actual.eq_ignore_ascii_case(&expected) {
+            Ok(target.to_path_buf())
+        } else {
+            Err(format!(
+                "The cached {name} failed its SHA-256 check. Expected {expected}, received {actual}."
+            ))
+        };
+    }
+    if target.is_file()
+        && sha256_file(target).is_ok_and(|actual| actual.eq_ignore_ascii_case(&expected))
+    {
+        return Ok(target.to_path_buf());
+    }
+    let target_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("The runtime filename for {name} is invalid."))?;
+    let sequence = ARTIFACT_DOWNLOAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let part = target.with_file_name(format!(
+        ".{target_name}.{}.{}.part",
+        std::process::id(),
+        sequence
+    ));
+    fs::copy(source, &part).map_err(|error| {
+        let _ = fs::remove_file(&part);
+        format!("Could not stage {name} under its runtime filename: {error}")
+    })?;
+    install_verified_part(&part, target, &expected, name)
 }
 
 async fn download_verified_artifact(
@@ -706,22 +908,24 @@ async fn download_verified_artifact(
             .filter(|total| *total > 0)
             .map(|total| downloaded_bytes as f64 / total as f64)
             .unwrap_or(0.12);
-        let phase_progress = 100.0
-            * (artifact_index as f64 + artifact_progress.min(0.99))
+        let phase_progress = 100.0 * (artifact_index as f64 + artifact_progress.min(0.99))
             / artifact_count.max(1) as f64;
-        emit_progress(app, JobProgress {
-            job_id: job_id.into(),
-            overall: 1.0,
-            file_index: 0,
-            file_count: 1,
-            stage: format!("Downloading {model_name}"),
-            detail: format!("{} · {} of {}", name, artifact_index + 1, artifact_count),
-            model_name: Some(model_name.into()),
-            model_index: Some(model_index),
-            model_count: Some(model_count),
-            phase: "download".into(),
-            phase_progress,
-        });
+        emit_progress(
+            app,
+            JobProgress {
+                job_id: job_id.into(),
+                overall: 1.0,
+                file_index: 0,
+                file_count: 1,
+                stage: format!("Downloading {model_name}"),
+                detail: format!("{} · {} of {}", name, artifact_index + 1, artifact_count),
+                model_name: Some(model_name.into()),
+                model_index: Some(model_index),
+                model_count: Some(model_count),
+                phase: "download".into(),
+                phase_progress,
+            },
+        );
     }
     file.sync_all().map_err(|error| {
         let _ = fs::remove_file(&part);
@@ -752,19 +956,24 @@ async fn ensure_model_artifacts(
         .timeout(std::time::Duration::from_secs(1800))
         .build()
         .map_err(|error| format!("Could not initialize the model downloader: {error}"))?;
-    let mut config_path = None;
+    let mut downloaded_paths = HashMap::new();
     let artifact_count = run.artifacts.len();
     for (artifact_index, artifact) in run.artifacts.iter().enumerate() {
         let path = download_verified_artifact(
-            app, active_job, job_id, &client, artifact, model_dir, &run.model_name,
-            model_index, model_count, artifact_index, artifact_count,
-        ).await?;
-        if matches!(
-            path.extension().and_then(|value| value.to_str()),
-            Some("yaml" | "yml")
-        ) {
-            config_path = Some(path);
-        }
+            app,
+            active_job,
+            job_id,
+            &client,
+            artifact,
+            model_dir,
+            &run.model_name,
+            model_index,
+            model_count,
+            artifact_index,
+            artifact_count,
+        )
+        .await?;
+        downloaded_paths.insert(artifact.name.as_str(), path);
     }
 
     let checkpoint_stem = Path::new(&run.model_filename)
@@ -776,65 +985,84 @@ async fn ensure_model_artifacts(
                 run.model_filename
             )
         })?;
+    if let Some(weight) = runtime_weight_artifact(run)? {
+        let source = downloaded_paths.get(weight.name.as_str()).ok_or_else(|| {
+            format!(
+                "The verified weight artifact for {} is missing from the model cache.",
+                run.model_name
+            )
+        })?;
+        let expected_checkpoint = model_dir.join(safe_artifact_name(&run.model_filename)?);
+        stage_verified_artifact(source, &expected_checkpoint, &weight.sha256, &weight.name)?;
+    }
+
     let expected_config = model_dir.join(format!("{checkpoint_stem}.yaml"));
-    if let Some(source) = config_path {
-        if source != expected_config {
-            let part = model_dir.join(format!(".{checkpoint_stem}.yaml.part"));
-            fs::copy(&source, &part)
-                .map_err(|error| format!("Could not prepare the model configuration: {error}"))?;
-            if expected_config.exists() {
-                fs::remove_file(&expected_config).map_err(|error| {
-                    format!("Could not replace the model configuration: {error}")
-                })?;
-            }
-            fs::rename(&part, &expected_config)
-                .map_err(|error| format!("Could not install the model configuration: {error}"))?;
-        }
+    if let Some(config) = runtime_config_artifact(run)? {
+        let source = downloaded_paths.get(config.name.as_str()).ok_or_else(|| {
+            format!(
+                "The verified configuration artifact for {} is missing from the model cache.",
+                run.model_name
+            )
+        })?;
+        stage_verified_artifact(source, &expected_config, &config.sha256, &config.name)?;
     }
     Ok(())
 }
 
 fn model_artifacts_ready(run: &ModelRun, model_dir: &Path) -> bool {
-    let artifacts_ready = !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
-        let Ok(name) = safe_artifact_name(&artifact.name) else { return false; };
-        let path = model_dir.join(name);
-        path.is_file()
-            && sha256_file(&path)
-                .is_ok_and(|actual| actual.eq_ignore_ascii_case(&artifact.sha256))
-    });
+    let artifacts_ready = !run.artifacts.is_empty()
+        && run.artifacts.iter().all(|artifact| {
+            let Ok(name) = safe_artifact_name(&artifact.name) else {
+                return false;
+            };
+            let path = model_dir.join(name);
+            path.is_file()
+                && sha256_file(&path)
+                    .is_ok_and(|actual| actual.eq_ignore_ascii_case(&artifact.sha256))
+        });
     if !artifacts_ready {
         return false;
     }
-    let has_config = run.artifacts.iter().any(|artifact| {
-        matches!(Path::new(&artifact.name).extension().and_then(|value| value.to_str()), Some("yaml" | "yml"))
-    });
-    if !has_config {
-        return true;
+    let weight = match runtime_weight_artifact(run) {
+        Ok(weight) => weight,
+        Err(_) => return false,
+    };
+    if let Some(weight) = weight {
+        let Ok(runtime_name) = safe_artifact_name(&run.model_filename) else {
+            return false;
+        };
+        let runtime_path = model_dir.join(runtime_name);
+        if !runtime_path.is_file()
+            || !sha256_file(&runtime_path)
+                .is_ok_and(|actual| actual.eq_ignore_ascii_case(&weight.sha256))
+        {
+            return false;
+        }
     }
+    let config = match runtime_config_artifact(run) {
+        Ok(config) => config,
+        Err(_) => return false,
+    };
+    let Some(config) = config else {
+        return true;
+    };
     Path::new(&run.model_filename)
         .file_stem()
         .and_then(|value| value.to_str())
-        .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
+        .map(|stem| model_dir.join(format!("{stem}.yaml")))
+        .is_some_and(|path| {
+            path.is_file()
+                && sha256_file(&path)
+                    .is_ok_and(|actual| actual.eq_ignore_ascii_case(&config.sha256))
+        })
 }
 
 fn model_artifacts_present(run: &ModelRun, model_dir: &Path) -> bool {
-    let artifacts_present = !run.artifacts.is_empty() && run.artifacts.iter().all(|artifact| {
-        safe_artifact_name(&artifact.name)
-            .is_ok_and(|name| model_dir.join(name).is_file())
-    });
-    if !artifacts_present {
-        return false;
-    }
-    let has_config = run.artifacts.iter().any(|artifact| {
-        matches!(Path::new(&artifact.name).extension().and_then(|value| value.to_str()), Some("yaml" | "yml"))
-    });
-    if !has_config {
-        return true;
-    }
-    Path::new(&run.model_filename)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .is_some_and(|stem| model_dir.join(format!("{stem}.yaml")).is_file())
+    validate_model_run(run).is_ok()
+        && !run.artifacts.is_empty()
+        && run.artifacts.iter().all(|artifact| {
+            safe_artifact_name(&artifact.name).is_ok_and(|name| model_dir.join(name).is_file())
+        })
 }
 
 #[tauri::command]
@@ -848,8 +1076,10 @@ fn required_model_downloads(app: AppHandle, plan: Vec<ModelRun>) -> Result<Vec<u
         .iter()
         .enumerate()
         .filter_map(|(index, run)| {
-            (!run.artifacts.is_empty() && !model_artifacts_present(run, &model_dir))
-                .then_some(index + 1)
+            (validate_model_run(run).is_ok()
+                && !run.artifacts.is_empty()
+                && !model_artifacts_present(run, &model_dir))
+            .then_some(index + 1)
         })
         .collect())
 }
@@ -1053,7 +1283,16 @@ async fn run_separator_attempt(
                         phase_progress: 0.0,
                     },
                 );
-                ensure_model_artifacts(app, active_job, job_id, run, model_dir, model_index, model_count).await?;
+                ensure_model_artifacts(
+                    app,
+                    active_job,
+                    job_id,
+                    run,
+                    model_dir,
+                    model_index,
+                    model_count,
+                )
+                .await?;
                 return Box::pin(run_separator_attempt(
                     app,
                     active_job,
@@ -1146,11 +1385,13 @@ fn unique_path(path: PathBuf) -> PathBuf {
     path
 }
 
-fn find_stem_file(directory: &Path, stem: &str) -> Option<PathBuf> {
-    let search = stem
-        .chars()
-        .filter(|value| value.is_ascii_alphanumeric())
-        .collect::<String>();
+fn runtime_key_from_output_name(name: &str) -> Option<&str> {
+    let marker_start = name.rfind("_(")? + 2;
+    let marker_end = name[marker_start..].find(")_")? + marker_start;
+    (marker_end > marker_start).then_some(&name[marker_start..marker_end])
+}
+
+fn find_exact_output(directory: &Path, runtime_key: &str) -> Option<PathBuf> {
     let mut candidates = WalkDir::new(directory)
         .max_depth(2)
         .into_iter()
@@ -1168,14 +1409,8 @@ fn find_stem_file(directory: &Path, stem: &str) -> Option<PathBuf> {
     candidates.into_iter().find(|path| {
         path.file_name()
             .and_then(|value| value.to_str())
-            .map(|value| {
-                value
-                    .to_ascii_lowercase()
-                    .chars()
-                    .filter(|character| character.is_ascii_alphanumeric())
-                    .collect::<String>()
-                    .contains(&search)
-            })
+            .and_then(runtime_key_from_output_name)
+            .map(|value| value.eq_ignore_ascii_case(runtime_key))
             .unwrap_or(false)
     })
 }
@@ -1269,12 +1504,26 @@ async fn process_job(
     if request.plan.is_empty() || request.stems.is_empty() {
         return Err("Choose at least one stem before starting.".into());
     }
+    if request
+        .stems
+        .iter()
+        .any(|stem| stem.trim().is_empty() || stem != stem.trim())
+    {
+        return Err("The separation plan contains an invalid stem identifier.".into());
+    }
+    let requested_stems = request.stems.iter().collect::<HashSet<_>>();
+    if requested_stems.len() != request.stems.len() {
+        return Err("The separation plan requests the same stem more than once.".into());
+    }
     let engine = separator_engine().ok_or_else(|| "The bundled separation engine is missing. Install uv, then reopen the app: brew install uv".to_string())?;
     let inputs = expand_paths(&request.paths);
     if inputs.is_empty() {
         return Err("No supported media files were found.".into());
     }
-    if let Some(path) = inputs.iter().find(|path| is_video(path) && !has_audio_stream(path)) {
+    if let Some(path) = inputs
+        .iter()
+        .find(|path| is_video(path) && !has_audio_stream(path))
+    {
         return Err(silent_video_message(path));
     }
 
@@ -1294,6 +1543,9 @@ async fn process_job(
     let model_dir = cache_root.join("models");
     fs::create_dir_all(&job_root)
         .map_err(|error| format!("Could not prepare working space: {error}"))?;
+    let _workspace_guard = JobWorkspaceGuard {
+        path: job_root.clone(),
+    };
     fs::create_dir_all(&model_dir)
         .map_err(|error| format!("Could not prepare model storage: {error}"))?;
 
@@ -1316,7 +1568,70 @@ async fn process_job(
     let model_count = request.plan.len();
     let file_share = 96.0 / file_count.max(1) as f64;
 
+    let mut run_failures = request
+        .plan
+        .iter()
+        .map(|run| validate_model_run(run).err())
+        .collect::<Vec<_>>();
+    for (index, failure) in run_failures.iter().enumerate() {
+        if let Some(failure) = failure {
+            warnings.push(format!(
+                "{} was skipped before separation: {failure}",
+                request.plan[index].model_name
+            ));
+        }
+    }
+
+    let mut run_for_capability = HashMap::new();
+    for capability in &request.stems {
+        let matches = request
+            .plan
+            .iter()
+            .enumerate()
+            .filter(|(index, run)| {
+                run_failures[*index].is_none()
+                    && runtime_key_for_capability(run, capability).is_some()
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if let Some(index) = matches.first() {
+            run_for_capability.insert(capability.clone(), *index);
+            if matches.len() > 1 {
+                warnings.push(format!(
+                    "More than one model was assigned to {}. {} was used.",
+                    title_case(capability),
+                    request.plan[*index].model_name
+                ));
+            }
+        } else {
+            warnings.push(format!(
+                "{} was requested, but the plan did not provide a valid exact output binding.",
+                title_case(capability)
+            ));
+        }
+    }
+    if run_for_capability.is_empty() {
+        return Err(format!(
+            "None of the requested stems has a valid exact output binding. {}",
+            warnings.join(" ")
+        ));
+    }
+
+    let active_runs = run_for_capability.values().copied().collect::<HashSet<_>>();
+    for index in &active_runs {
+        let run = &request.plan[*index];
+        if run.outputs.is_empty() {
+            warnings.push(format!(
+                "{} uses the legacy plan format. Its requested outputs will only be accepted when audio-separator returns the exact same parenthesized output token.",
+                run.model_name
+            ));
+        }
+    }
+
     for (index, run) in request.plan.iter().enumerate() {
+        if !active_runs.contains(&index) || run_failures[index].is_some() {
+            continue;
+        }
         if run.artifacts.is_empty() || model_artifacts_ready(run, &model_dir) {
             continue;
         }
@@ -1337,7 +1652,24 @@ async fn process_job(
                 phase_progress: 0.0,
             },
         );
-        ensure_model_artifacts(&app, active_job.inner(), &job_id, run, &model_dir, index + 1, model_count).await?;
+        if let Err(error) = ensure_model_artifacts(
+            &app,
+            active_job.inner(),
+            &job_id,
+            run,
+            &model_dir,
+            index + 1,
+            model_count,
+        )
+        .await
+        {
+            ensure_job_running(active_job.inner(), &job_id)?;
+            warnings.push(format!(
+                "{} could not be prepared and was skipped: {error}",
+                run.model_name
+            ));
+            run_failures[index] = Some(error);
+        }
     }
 
     for (file_index, source) in inputs.iter().enumerate() {
@@ -1356,8 +1688,12 @@ async fn process_job(
         );
         let duration = probe_duration(source);
         let file_work = job_root.join(format!("file-{file_index}"));
-        fs::create_dir_all(&file_work)
-            .map_err(|error| format!("Could not prepare a file workspace: {error}"))?;
+        if let Err(error) = fs::create_dir_all(&file_work) {
+            warnings.push(format!(
+                "{source_name} was skipped because its temporary workspace could not be created: {error}"
+            ));
+            continue;
+        }
         let separation_input = if is_video(source) {
             emit_progress(
                 &app,
@@ -1376,19 +1712,31 @@ async fn process_job(
                 },
             );
             let extracted = file_work.join("source-audio.wav");
-            extract_audio(source, &extracted)?;
+            if let Err(error) = extract_audio(source, &extracted) {
+                warnings.push(format!("{source_name} was skipped: {error}"));
+                continue;
+            }
             ensure_job_running(active_job.inner(), &job_id)?;
             extracted
         } else {
             source.clone()
         };
 
+        let mut file_run_succeeded = vec![false; request.plan.len()];
         for (index, run) in request.plan.iter().enumerate() {
+            if !active_runs.contains(&index) || run_failures[index].is_some() {
+                continue;
+            }
             ensure_job_running(active_job.inner(), &job_id)?;
             let run_dir = file_work.join(format!("model-{index}"));
-            fs::create_dir_all(&run_dir)
-                .map_err(|error| format!("Could not create a model workspace: {error}"))?;
-            run_separator(
+            if let Err(error) = fs::create_dir_all(&run_dir) {
+                warnings.push(format!(
+                    "{} could not run for {source_name} because its temporary workspace could not be created: {error}",
+                    run.model_name
+                ));
+                continue;
+            }
+            match run_separator(
                 &app,
                 active_job.inner(),
                 &job_id,
@@ -1402,7 +1750,17 @@ async fn process_job(
                 index + 1,
                 model_count,
             )
-            .await?;
+            .await
+            {
+                Ok(()) => file_run_succeeded[index] = true,
+                Err(error) => {
+                    ensure_job_running(active_job.inner(), &job_id)?;
+                    warnings.push(format!(
+                        "{} failed for {source_name}; other requested stems will continue: {error}",
+                        run.model_name
+                    ));
+                }
+            }
         }
 
         let source_output_dir = if file_count > 1 {
@@ -1410,8 +1768,12 @@ async fn process_job(
         } else {
             output_root.clone()
         };
-        fs::create_dir_all(&source_output_dir)
-            .map_err(|error| format!("Could not create an output folder: {error}"))?;
+        if let Err(error) = fs::create_dir_all(&source_output_dir) {
+            warnings.push(format!(
+                "Outputs for {source_name} could not be saved: {error}"
+            ));
+            continue;
+        }
 
         emit_progress(
             &app,
@@ -1440,17 +1802,49 @@ async fn process_job(
 
         for (stem_index, stem) in request.stems.iter().enumerate() {
             ensure_job_running(active_job.inner(), &job_id)?;
-            let run_index = request.plan.iter().position(|run| run.stems.contains(stem));
-            let found = run_index
-                .and_then(|index| find_stem_file(&file_work.join(format!("model-{index}")), stem));
+            let Some(run_index) = run_for_capability.get(stem).copied() else {
+                continue;
+            };
+            if !file_run_succeeded[run_index] {
+                continue;
+            }
+            let run = &request.plan[run_index];
+            let Some(runtime_key) = runtime_key_for_capability(run, stem) else {
+                warnings.push(format!(
+                    "{} was requested for {source_name}, but its exact output binding disappeared from the plan.",
+                    title_case(stem)
+                ));
+                continue;
+            };
+            let found =
+                find_exact_output(&file_work.join(format!("model-{run_index}")), runtime_key);
             let Some(found) = found else {
-                warnings.push(format!("{} was requested for {}, but the selected model did not return a matching file.", title_case(stem), source_name));
+                warnings.push(format!(
+                    "{} was requested for {}, but {} did not return the exact '{}' output declared by the registry.",
+                    title_case(stem),
+                    source_name,
+                    run.model_name,
+                    runtime_key
+                ));
                 continue;
             };
 
+            let safe_stem = sanitize(stem);
+            let output_stem = if safe_stem.is_empty() {
+                "stem"
+            } else {
+                safe_stem.as_str()
+            };
             let wav_path =
-                unique_path(source_output_dir.join(format!("{}_{}.wav", source_base, stem)));
-            align_wav(&found, &wav_path, duration)?;
+                unique_path(source_output_dir.join(format!("{}_{}.wav", source_base, output_stem)));
+            if let Err(error) = align_wav(&found, &wav_path, duration) {
+                let _ = fs::remove_file(&wav_path);
+                warnings.push(format!(
+                    "{} was separated for {source_name}, but its WAV could not be saved: {error}",
+                    title_case(stem)
+                ));
+                continue;
+            }
             ensure_job_running(active_job.inner(), &job_id)?;
             let wav_name = wav_path
                 .file_name()
@@ -1484,12 +1878,21 @@ async fn process_job(
                         model_index: Some(model_count),
                         model_count: Some(model_count),
                         phase: "finish".into(),
-                        phase_progress: 20.0 + 75.0 * stem_index as f64 / request.stems.len().max(1) as f64,
+                        phase_progress: 20.0
+                            + 75.0 * stem_index as f64 / request.stems.len().max(1) as f64,
                     },
                 );
-                let video_path =
-                    unique_path(source_output_dir.join(format!("{}_{}.mp4", source_base, stem)));
-                make_video(source, &wav_path, &video_path, duration)?;
+                let video_path = unique_path(
+                    source_output_dir.join(format!("{}_{}.mp4", source_base, output_stem)),
+                );
+                if let Err(error) = make_video(source, &wav_path, &video_path, duration) {
+                    let _ = fs::remove_file(&video_path);
+                    warnings.push(format!(
+                        "The {} WAV for {source_name} was saved, but its video could not be created: {error}",
+                        title_case(stem)
+                    ));
+                    continue;
+                }
                 ensure_job_running(active_job.inner(), &job_id)?;
                 let video_name = video_path
                     .file_name()
@@ -1508,6 +1911,13 @@ async fn process_job(
         }
     }
 
+    if outputs.is_empty() {
+        return Err(format!(
+            "No requested stems could be completed. {}",
+            warnings.join(" ")
+        ));
+    }
+
     emit_progress(
         &app,
         JobProgress {
@@ -1515,7 +1925,11 @@ async fn process_job(
             overall: 100.0,
             file_index: file_count.saturating_sub(1),
             file_count,
-            stage: "Your stems are ready".into(),
+            stage: if warnings.is_empty() {
+                "Your stems are ready".into()
+            } else {
+                "Available stems are ready".into()
+            },
             detail: if inputs.iter().all(|source| {
                 source
                     .extension()
@@ -1649,8 +2063,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_audio_stream, install_verified_part, is_corrupt_checkpoint_error, safe_artifact_name,
-        sha256_file, silent_video_message,
+        find_exact_output, has_audio_stream, install_verified_part, is_corrupt_checkpoint_error,
+        model_artifacts_present, model_artifacts_ready, runtime_key_for_capability,
+        runtime_key_from_output_name, safe_artifact_name, sha256_file, silent_video_message,
+        stage_verified_artifact, validate_model_run, ModelArtifact, ModelRun,
     };
     use std::{
         fs,
@@ -1678,6 +2094,46 @@ mod tests {
     }
 
     #[test]
+    fn registry_output_binding_deserializes_and_resolves_exactly() {
+        let run: ModelRun = serde_json::from_value(serde_json::json!({
+            "modelFilename": "drums.ckpt",
+            "modelName": "Detailed drums",
+            "stems": ["hihat"],
+            "outputs": [{ "capability": "hihat", "runtimeKey": "hh" }]
+        }))
+        .unwrap();
+
+        assert_eq!(runtime_key_for_capability(&run, "hihat"), Some("hh"));
+        assert_eq!(runtime_key_for_capability(&run, "hh"), None);
+    }
+
+    #[test]
+    fn exact_output_matching_uses_the_final_parenthesized_runtime_token() {
+        assert_eq!(
+            runtime_key_from_output_name("song_(hh)_demo_(Ride)_model.wav"),
+            Some("Ride")
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "stem-separator-output-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let hihat = root.join("song_(Hihat)_model.wav");
+        let hh = root.join("song_(HH)_model.wav");
+        fs::write(&hihat, b"not hh").unwrap();
+        fs::write(&hh, b"exact hh").unwrap();
+
+        assert_eq!(find_exact_output(&root, "hh"), Some(hh));
+        assert_eq!(find_exact_output(&root, "ride"), None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn completed_concurrent_download_is_accepted_after_its_part_was_moved() {
         let root = std::env::temp_dir().join(format!(
             "stem-separator-artifact-test-{}-{}",
@@ -1699,6 +2155,93 @@ mod tests {
             target
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pinned_artifacts_are_staged_under_the_runtime_names_without_moving_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "stem-separator-runtime-artifact-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let source_weight = root.join("upstream-name.ckpt");
+        let source_config = root.join("upstream-config.yaml");
+        fs::write(&source_weight, b"verified checkpoint").unwrap();
+        fs::write(&source_config, b"verified config").unwrap();
+        let weight_hash = sha256_file(&source_weight).unwrap();
+        let config_hash = sha256_file(&source_config).unwrap();
+        let run = ModelRun {
+            model_filename: "runtime-name.ckpt".into(),
+            model_name: "Renamed model".into(),
+            stems: vec!["vocals".into()],
+            outputs: Vec::new(),
+            artifacts: vec![
+                ModelArtifact {
+                    name: "upstream-name.ckpt".into(),
+                    url: "https://example.test/model".into(),
+                    sha256: weight_hash.clone(),
+                },
+                ModelArtifact {
+                    name: "upstream-config.yaml".into(),
+                    url: "https://example.test/config".into(),
+                    sha256: config_hash.clone(),
+                },
+            ],
+        };
+
+        assert!(model_artifacts_present(&run, &root));
+        assert!(!model_artifacts_ready(&run, &root));
+        stage_verified_artifact(
+            &source_weight,
+            &root.join("runtime-name.ckpt"),
+            &weight_hash,
+            "upstream-name.ckpt",
+        )
+        .unwrap();
+        stage_verified_artifact(
+            &source_config,
+            &root.join("runtime-name.yaml"),
+            &config_hash,
+            "upstream-config.yaml",
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&source_weight).unwrap(), b"verified checkpoint");
+        assert_eq!(
+            fs::read(root.join("runtime-name.ckpt")).unwrap(),
+            b"verified checkpoint"
+        );
+        assert!(model_artifacts_ready(&run, &root));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ambiguous_weight_artifacts_are_rejected_without_an_exact_runtime_name() {
+        let artifact = |name: &str| ModelArtifact {
+            name: name.into(),
+            url: format!("https://example.test/{name}"),
+            sha256: "a".repeat(64),
+        };
+        let ambiguous = ModelRun {
+            model_filename: "runtime.ckpt".into(),
+            model_name: "Ambiguous model".into(),
+            stems: vec!["vocals".into()],
+            outputs: Vec::new(),
+            artifacts: vec![artifact("first.ckpt"), artifact("second.ckpt")],
+        };
+        assert!(validate_model_run(&ambiguous)
+            .unwrap_err()
+            .contains("multiple possible weight artifacts"));
+
+        let exact = ModelRun {
+            artifacts: vec![artifact("first.ckpt"), artifact("runtime.ckpt")],
+            ..ambiguous
+        };
+        assert!(validate_model_run(&exact).is_ok());
     }
 
     #[test]

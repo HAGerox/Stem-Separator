@@ -1,16 +1,7 @@
-export type StemId =
-  | "vocals"
-  | "instrumental"
-  | "drums"
-  | "bass"
-  | "guitar"
-  | "piano"
-  | "kick"
-  | "snare"
-  | "toms"
-  | "hihat"
-  | "cymbals"
-  | "other";
+// Capability identifiers are registry data, not an application enum. Keeping
+// this alias makes the request/response types readable without preventing a
+// newly published stem from appearing in the app.
+export type StemId = string;
 
 export type View = "drop" | "select" | "processing" | "results";
 
@@ -36,13 +27,32 @@ export interface CatalogModel {
   source?: string;
   license?: string;
   status?: string;
+  runtimeValidated?: boolean;
   artifacts?: ModelArtifact[];
+  outputs?: ModelOutput[];
 }
 
-interface ModelArtifact {
+export interface ModelArtifact {
   name: string;
   url: string;
   sha256: string;
+}
+
+export interface ModelOutput {
+  capability: StemId;
+  runtimeKey: string;
+  label?: string;
+}
+
+export interface CatalogCapability {
+  id: StemId;
+  label: string;
+  description?: string;
+  kind: "stem" | "complement" | "preset" | "transform" | "workflow";
+  group: string;
+  groupLabel: string;
+  glyph?: string;
+  promoted?: boolean;
 }
 
 export interface Catalog {
@@ -50,7 +60,11 @@ export interface Catalog {
   generatedAt: string;
   sourceLabel: string;
   models: CatalogModel[];
-  recommendations?: Partial<Record<StemId | "multitrack_4" | "multitrack_6", string>>;
+  recommendations?: Record<string, string>;
+  capabilities?: Record<string, CatalogCapability>;
+  promoted?: StemId[];
+  groups?: string[];
+  multiTrack?: { modelId: string; stems: StemId[] };
 }
 
 export interface ModelRun {
@@ -58,6 +72,7 @@ export interface ModelRun {
   modelName: string;
   stems: StemId[];
   artifacts?: ModelArtifact[];
+  outputs?: ModelOutput[];
 }
 
 type JobPhase = "upload" | "prepare" | "download" | "separate" | "finish" | "complete";
