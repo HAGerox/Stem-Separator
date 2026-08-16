@@ -2,7 +2,6 @@ import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type {
-  EnvironmentStatus,
   InputFile,
   ModelRun,
   ProcessResult,
@@ -11,21 +10,6 @@ import type {
 } from "../types";
 
 export const inTauri = isTauri();
-
-export async function detectEnvironment(): Promise<EnvironmentStatus> {
-  if (!inTauri) {
-    return {
-      isTauri: false,
-      ffmpegAvailable: false,
-      ffprobeAvailable: false,
-      separatorAvailable: false,
-      uvAvailable: false,
-      engineLabel: "Browser preview",
-      acceleration: "Preview mode",
-    };
-  }
-  return invoke<EnvironmentStatus>("detect_environment");
-}
 
 export async function resolveInputs(paths: string[]): Promise<InputFile[]> {
   return invoke<InputFile[]>("resolve_inputs", { paths });

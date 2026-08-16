@@ -9,7 +9,6 @@
   --muted: #77766e;
   --soft: #a3a097;
   --app-bg: #f3f1ec;
-  --header-bg: rgba(247, 245, 240, .88);
   --paper: #fbfaf7;
   --surface: #efede7;
   --card: rgba(252, 251, 248, .76);
@@ -33,7 +32,6 @@
     --muted: #aaa9a1;
     --soft: #797a73;
     --app-bg: #181916;
-    --header-bg: rgba(25, 26, 23, .9);
     --paper: #23241f;
     --surface: #2b2c27;
     --card: rgba(36, 37, 32, .88);
@@ -78,7 +76,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .drop-view.is-dragging::before { border-color: var(--accent-ring); background: color-mix(in srgb, var(--accent) 5%, var(--paper)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 4%, transparent), 0 12px 40px color-mix(in srgb, var(--accent) 8%, transparent); }
 .drop-copy { text-align: center; margin-top: -18px; position: relative; z-index: 1; }
 .drop-icon { width: 72px; height: 72px; margin: 0 auto 26px; border-radius: 24px; display: grid; place-items: center; background: var(--accent-pale); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-ring); }
-.drop-copy h1, .stem-section h1, .result-heading h1 { margin: 0; letter-spacing: -1.25px; font-size: 34px; line-height: 1.15; }
+.drop-copy h1, .result-heading h1 { margin: 0; letter-spacing: -1.25px; font-size: 34px; line-height: 1.15; }
 .drop-copy p { color: var(--muted); margin: 12px 0 31px; font-size: 16px; }
 .primary-button, .secondary-button, .danger-button {
   min-height: 45px; padding: 0 22px; border: 0; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;

@@ -186,7 +186,6 @@ export async function processServerJob(
       })),
       warnings: [],
       usedDemoMode: false,
-      serverMode: true,
     };
   }
 }

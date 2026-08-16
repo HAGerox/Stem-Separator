@@ -230,7 +230,7 @@ export function availableStems(catalog: Catalog | null): StemId[] {
 export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack = false): ModelRun[] {
   if (multiTrack) {
     const model = recommendedMultiTrackModel(catalog);
-    if (model) return [{ id: model.id, modelFilename: model.filename, modelName: model.name, stems: [...model.stems], artifacts: model.artifacts }];
+    if (model) return [{ modelFilename: model.filename, modelName: model.name, stems: [...model.stems], artifacts: model.artifacts }];
   }
 
   // Custom selections are independent extraction targets. Resolve the best
@@ -249,7 +249,6 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack 
       existing.stems.push(stem);
     } else {
       runsByModel.set(model.id, {
-        id: model.id,
         modelFilename: model.filename,
         modelName: model.name,
         stems: [stem],

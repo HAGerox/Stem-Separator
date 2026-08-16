@@ -33,18 +33,6 @@ fn bundled_resource(command: &str) -> Option<PathBuf> {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct EnvironmentStatus {
-    is_tauri: bool,
-    ffmpeg_available: bool,
-    ffprobe_available: bool,
-    separator_available: bool,
-    uv_available: bool,
-    engine_label: String,
-    acceleration: String,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 struct InputFile {
     path: String,
     name: String,
@@ -57,8 +45,6 @@ struct InputFile {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ModelRun {
-    #[allow(dead_code)]
-    id: String,
     model_filename: String,
     model_name: String,
     stems: Vec<String>,
@@ -96,7 +82,6 @@ struct JobProgress {
     model_name: Option<String>,
     model_index: Option<usize>,
     model_count: Option<usize>,
-    eta_seconds: Option<u64>,
     phase: String,
     phase_progress: f64,
 }
@@ -313,31 +298,6 @@ fn separator_engine() -> Option<EngineCommand> {
         });
     }
     None
-}
-
-#[tauri::command]
-fn detect_environment() -> EnvironmentStatus {
-    let uv = available("uvx");
-    let bundled_separator = available("audio-separator");
-    EnvironmentStatus {
-        is_tauri: true,
-        ffmpeg_available: available("ffmpeg"),
-        ffprobe_available: available("ffprobe"),
-        separator_available: uv || bundled_separator,
-        uv_available: uv,
-        engine_label: if bundled_separator {
-            "Audio Separator · bundled custom PR 298 + 299 build".into()
-        } else if uv {
-            "Audio Separator · custom PR 298 + 299 build".into()
-        } else {
-            "Audio Separator · setup required".into()
-        },
-        acceleration: if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-            "Apple Silicon · compiled MPS / CoreML".into()
-        } else {
-            "Local processing".into()
-        },
-    }
 }
 
 fn updater_configured(app: &AppHandle) -> bool {
@@ -756,7 +716,6 @@ async fn download_verified_artifact(
             model_name: Some(model_name.into()),
             model_index: Some(model_index),
             model_count: Some(model_count),
-            eta_seconds: None,
             phase: "download".into(),
             phase_progress,
         });
@@ -1009,7 +968,7 @@ async fn run_separator_attempt(
                     job_id: job_id.into(), overall: (base + model_share * local_progress / 100.0).min(97.0),
                     file_index, file_count, stage: format!("Separating {}", run.stems.iter().map(|stem| title_case(stem)).collect::<Vec<_>>().join(" + ")),
                     detail: format!("{} · running locally", run.model_name), model_name: Some(run.model_name.clone()),
-                    model_index: Some(model_index), model_count: Some(model_count), eta_seconds: None,
+                    model_index: Some(model_index), model_count: Some(model_count),
                     phase: "separate".into(), phase_progress: local_progress,
                 });
             }
@@ -1036,7 +995,6 @@ async fn run_separator_attempt(
                 model_name: Some(run.model_name.clone()),
                 model_index: Some(model_index),
                 model_count: Some(model_count),
-                eta_seconds: None,
                 phase: "separate".into(),
                 phase_progress: 100.0,
             },
@@ -1072,7 +1030,6 @@ async fn run_separator_attempt(
                         model_name: Some(run.model_name.clone()),
                         model_index: Some(model_index),
                         model_count: Some(model_count),
-                        eta_seconds: None,
                         phase: "download".into(),
                         phase_progress: 0.0,
                     },
@@ -1089,7 +1046,6 @@ async fn run_separator_attempt(
                         model_name: Some(run.model_name.clone()),
                         model_index: Some(model_index),
                         model_count: Some(model_count),
-                        eta_seconds: None,
                         phase: "download".into(),
                         phase_progress: 0.0,
                     },
@@ -1374,7 +1330,6 @@ async fn process_job(
                 model_name: Some(run.model_name.clone()),
                 model_index: Some(index + 1),
                 model_count: Some(model_count),
-                eta_seconds: None,
                 phase: "download".into(),
                 phase_progress: 0.0,
             },
@@ -1413,7 +1368,6 @@ async fn process_job(
                     model_name: None,
                     model_index: None,
                     model_count: Some(model_count),
-                    eta_seconds: None,
                     phase: "prepare".into(),
                     phase_progress: 4.0,
                 },
@@ -1476,7 +1430,6 @@ async fn process_job(
                 model_name: None,
                 model_index: Some(model_count),
                 model_count: Some(model_count),
-                eta_seconds: None,
                 phase: "finish".into(),
                 phase_progress: 18.0,
             },
@@ -1527,7 +1480,6 @@ async fn process_job(
                         model_name: None,
                         model_index: Some(model_count),
                         model_count: Some(model_count),
-                        eta_seconds: None,
                         phase: "finish".into(),
                         phase_progress: 20.0 + 75.0 * stem_index as f64 / request.stems.len().max(1) as f64,
                     },
@@ -1574,7 +1526,6 @@ async fn process_job(
             model_name: None,
             model_index: Some(model_count),
             model_count: Some(model_count),
-            eta_seconds: Some(0),
             phase: "complete".into(),
             phase_progress: 100.0,
         },
@@ -1650,7 +1601,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            detect_environment,
             check_for_update,
             install_update,
             resolve_inputs,

@@ -27,7 +27,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { availableStems, buildModelPlan, loadCatalog, recommendedMultiTrackModel, recommendedMultiTrackStems } from "./lib/catalog";
 import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, requiredModelDownloads, resolveInputs, revealPath } from "./lib/native";
 import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
-import type { ServerUploadHandle, ServerUploadSnapshot } from "./lib/server";
+import type { ServerUploadHandle } from "./lib/server";
 import { serverMode } from "./lib/runtime";
 import type { Catalog, InputFile, JobProgress, OutputStem, ProcessResult, StemId, UpdateInfo, View } from "./types";
 
@@ -626,7 +626,6 @@ export default function App() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<ServerUploadSnapshot | null>(null);
   const [plannedDownloads, setPlannedDownloads] = useState<number[]>([]);
   const previewTimer = useRef<number | null>(null);
   const previewCompletion = useRef<number | null>(null);
@@ -652,10 +651,8 @@ export default function App() {
     if (uploads.length !== inputs.length) return null;
     const generation = ++uploadGeneration.current;
     void uploadHandle.current?.cancel();
-    setUploadStatus({ state: "uploading", progress: 0, uploadedBytes: 0, totalBytes: uploads.reduce((total, file) => total + file.size, 0) });
     const handle = startServerUpload(uploads, (snapshot) => {
       if (uploadGeneration.current !== generation) return;
-      setUploadStatus(snapshot);
       if (starting.current && viewRef.current === "processing" && snapshot.state === "uploading") {
         setProgress({
           jobId: "uploading",
@@ -708,7 +705,6 @@ export default function App() {
       void uploadHandle.current?.cancel();
       uploadHandle.current = null;
       uploadKey.current = null;
-      setUploadStatus(null);
       return;
     }
     const key = files.map((file) => file.path).join("\u0000");
@@ -897,7 +893,6 @@ export default function App() {
     uploadHandle.current = null;
     activeServerJobId.current = null;
     uploadKey.current = null;
-    setUploadStatus(null);
     for (const path of browserFiles.current.keys()) URL.revokeObjectURL(path);
     browserFiles.current.clear();
     setFiles([]); setResult(null); setSelected(["vocals"]); setMultiTrack(false); setView("drop");

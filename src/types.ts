@@ -39,7 +39,7 @@ export interface CatalogModel {
   artifacts?: ModelArtifact[];
 }
 
-export interface ModelArtifact {
+interface ModelArtifact {
   name: string;
   url: string;
   sha256: string;
@@ -54,14 +54,13 @@ export interface Catalog {
 }
 
 export interface ModelRun {
-  id: string;
   modelFilename: string;
   modelName: string;
   stems: StemId[];
   artifacts?: ModelArtifact[];
 }
 
-export type JobPhase = "upload" | "prepare" | "download" | "separate" | "finish" | "complete";
+type JobPhase = "upload" | "prepare" | "download" | "separate" | "finish" | "complete";
 
 export interface JobProgress {
   jobId: string;
@@ -73,7 +72,6 @@ export interface JobProgress {
   modelName?: string;
   modelIndex?: number;
   modelCount?: number;
-  etaSeconds?: number;
   phase?: JobPhase;
   phaseProgress?: number;
 }
@@ -93,17 +91,6 @@ export interface ProcessResult {
   outputs: OutputStem[];
   warnings: string[];
   usedDemoMode: boolean;
-  serverMode?: boolean;
-}
-
-export interface EnvironmentStatus {
-  isTauri: boolean;
-  ffmpegAvailable: boolean;
-  ffprobeAvailable: boolean;
-  separatorAvailable: boolean;
-  uvAvailable: boolean;
-  engineLabel: string;
-  acceleration: string;
 }
 
 export interface UpdateInfo {
