@@ -1,172 +1,68 @@
 # Stem Separator
 
-Local stem separation in two products:
+Stem Separator turns songs into individual parts such as vocals, drums, bass,
+guitar, piano, and instrumentals. Add an audio or video file, choose the stems
+you want, and let the app create separate WAV files for each part.
 
-- A macOS React + Tauri app for Apple Silicon.
-- A headless Linux server for WSL2 with NVIDIA CUDA, a CLI, JSON API, and WebUI.
+Everything runs locally. Your media is processed on your own Mac or on a server
+you control, and is never uploaded to a third-party separation service.
 
-## What works
+## Highlights
 
-- Audio and video drag-and-drop, file picking, and recursive folder import
-- Registry-driven vocals, instrumental, drums, bass, guitar, piano, other, and detailed kick/snare/toms/hi-hat/cymbal choices
-- Automatic multi-model planning from a replaceable JSON catalog
-- Local processing through the [`HAGerox/python-audio-separator`](https://github.com/HAGerox/python-audio-separator/tree/personal/pr298-pr299-combined) combined PR 298 + 299 build
-- Automatic first-use engine provisioning through `uvx`
-- WAV output at 44.1 kHz, written to a `Stem Separator` folder beside the source
-- MP4/MOV audio extraction and optional per-stem video remuxing through FFmpeg
-- Source-duration probing plus output padding/trimming before video remuxing
-- Linear file/model-aware progress, expandable technical details, confirmed process cancellation, result playback, and Finder reveal
-- System light/dark appearance, a draggable macOS title bar, and an extensible collapsed stem picker
-- One in-app result per source/stem; video sources prefer the remuxed video while their WAV remains in Finder
-- Browser-only interface demo for fast design testing
+- Simple drag-and-drop workflow for audio, video, and folders
+- Individual stem selection or a complete multi-track split
+- Carefully selected models for different instruments
+- Progress, cancellation, playback, and quick access to finished files
+- Video outputs that keep the original picture with the separated audio
+- Automatic model downloads and updates
 
-## Run the macOS app
+The first separation may take longer while the required model is downloaded.
+Later runs reuse the local model cache.
 
-Prerequisites:
+## Platforms
+
+Stem Separator is available as:
+
+- A desktop app for Apple Silicon Macs
+- A self-hosted browser app for Linux or WSL2 systems with an NVIDIA GPU
+
+## For developers
+
+The desktop app uses React, TypeScript, Tauri, and a Rust processing backend.
+To run it on an Apple Silicon Mac:
 
 ```bash
 brew install ffmpeg uv
-```
-
-Then:
-
-```bash
 npm install
 npm run tauri:dev
 ```
 
-The first real separation can take substantially longer while the selected model files download. Later runs reuse the bundled Python environment and verified model cache. The managed runtime pins commit `dccdbe5` from `stem-separator-registry-models`, which combines upstream PR 298's accelerated PyTorch paths, PR 299's MSST MDXC inference-default fixes, and direct registry-provisioned RoFormer support. It also supplies `audioread` and pins `librosa<0.11` for compatibility.
-
-On Apple Silicon macOS, the app passes `--use_torch_compile` on every separation. PR 298 enables regional `torch.compile` for verified MPS RoFormer paths and safely warns and falls back to eager inference for model/device combinations that do not support compilation. A new model or input shape can incur a one-time compilation cost before warm runs benefit.
-
-To preview only the interface in a browser:
+To preview the interface without processing media:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:1420/?demo=1` to walk through the complete sample flow without processing media.
+Then open `http://localhost:1420/?demo=1`.
 
-## Run the WSL2 CUDA server
-
-The server is designed for Ubuntu on WSL2 with an NVIDIA GPU passed through by the Windows driver. Do not install a Linux NVIDIA display driver inside WSL; verify GPU access first with:
-
-```bash
-/usr/lib/wsl/lib/nvidia-smi
-```
-
-The recommended, isolated installation is Docker. Install Docker with WSL integration and the NVIDIA Container Toolkit, then from this repository run:
+To run the Linux/WSL2 server with Docker and the NVIDIA Container Toolkit:
 
 ```bash
 docker compose -f server/compose.yaml up --build
 ```
 
-Only the Windows/host NVIDIA driver and NVIDIA Container Toolkit are required; do not install a separate CUDA toolkit in WSL. The image carries its pinned CUDA 12.8, cuDNN, PyTorch, and ONNX Runtime user-space libraries. Use a current production NVIDIA driver; the CUDA 12.8 base image supports compatible maintained branches starting at 535.
+Then open `http://localhost:7860`.
 
-Open `http://localhost:7860`. The Compose service binds only to Windows/WSL localhost, mounts persistent job and model caches, and requests all NVIDIA GPUs.
-
-For a native WSL install instead:
-
-```bash
-sudo apt update
-sudo apt install -y ffmpeg python3 python3-venv
-# Install uv using the official Astral instructions, then:
-./server/scripts/install-wsl.sh
-stem-separator-server
-```
-
-The native server defaults to `127.0.0.1:7860`; do not bind it to another interface until authentication and TLS are added. The WebUI is built from the same React interface as the macOS app and supports multi-file uploads, the same individual/Multi-Track model routing, live staged progress, cancellation, waveform playback, individual output downloads, video stem remuxing, and a ZIP download of every result. Server state defaults to `~/.local/share/stem-separator-server`; override it with `STEM_SEPARATOR_DATA_DIR` and `STEM_SEPARATOR_MODEL_DIR`.
-
-Useful endpoints:
-
-- `GET /healthz`
-- `GET /api/environment`
-- `POST /api/jobs` as multipart form data with one or more `files`, comma-separated `stems`, and optional `multi_track=true`
-- `GET /api/jobs/{id}`
-- `DELETE /api/jobs/{id}`
-- `GET /api/jobs/{id}/outputs/{name}`
-- `GET /api/jobs/{id}/download`
-
-`STEM_SEPARATOR_TORCH_COMPILE=1` enables the fork's optional Torch compilation path. It is off by default on the server because CUDA compatibility and warm-up cost vary by model/GPU.
-
-## Build workflows
-
-Tagged releases (`v*`) create a GitHub Release and publish update assets:
-
-- `Build macOS app` publishes an unsigned Apple Silicon DMG plus the Ed25519-signed Tauri payload and `latest.json` manifest on the same versioned release. Installed apps resolve the manifest through GitHub's latest-release redirect.
-- `Build WSL CUDA server` publishes one Linux/WSL installer archive and `ghcr.io/hagerox/stem-separator-server:latest` plus a version tag.
-
-Before the first tagged release, generate one Tauri updater keypair and keep it permanently:
-
-```bash
-npm run tauri signer generate -- -w stem-separator-updater.key
-```
-
-Store the private key content as the GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY` and its optional password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The non-secret public key is committed in `src-tauri/tauri.conf.json`. Losing or rotating the private key without a migration release prevents installed clients from trusting future updates.
-
-The app bundle remains ad-hoc signed so its nested executables have a consistent code signature, while the DMG container is deliberately left unsigned. The Tauri updater signature is independent of both. For normal end-user distribution, Developer ID signing and notarization are still strongly recommended because the app continues to trigger Gatekeeper approval and offers no Apple identity assurance.
-
-Create a release by updating every product version (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `server/pyproject.toml`, and `server/src/stem_separator_server/__init__.py`), committing, and pushing a matching tag such as `v0.2.0`.
-
-## Model catalog
-
-Both products fetch `registry.json` from [`HAGerox/Stem-Separator-Models`](https://github.com/HAGerox/Stem-Separator-Models), cache the last known-good response with its ETag, and fall back to [`catalog/models.v1.json`](catalog/models.v1.json) or the server snapshot when offline.
-
-Set `VITE_MODEL_REGISTRY_URL` for a desktop registry mirror, or `STEM_SEPARATOR_MODEL_REGISTRY_URL` for the server. The server refresh interval defaults to six hours and is configurable with `STEM_SEPARATOR_MODEL_REGISTRY_REFRESH_SECONDS`.
-
-Recommendations are capability-aware. The global registry winner is used when `audio-separator` can execute it; otherwise its first compatible alternative is selected:
-
-- Becruily Deux for vocals
-- Gabox Fv7z for instrumental
-- BS RoFormer SW for six-stem/instrument work
-- Jarredou DrumSep 5 for kick, snare, toms, hi-hat, and cymbals
-- HTDemucs FT as the compatible four-stem fallback
-
-The registry currently recommends a MVSepLess model for strings. Because neither shipped product includes that runtime, strings were removed from the selectable stems instead of presenting the old approximate `Other` relabel. They will appear automatically once a compatible recommendation/backend is available.
-
-## Linux/WSL updates
-
-Native installations check GitHub and update the installed wheel with:
-
-```bash
-stem-separator-server-update --check
-stem-separator-server-update
-```
-
-The updater verifies GitHub's SHA-256 digest for the single Linux release bundle; when GitHub CLI is installed it also verifies the GitHub artifact attestation before installing. Restart the service after an update. Add `--auto-update` (or `STEM_SEPARATOR_AUTO_UPDATE=1`) to update automatically before a native server starts. Docker installations update by pulling the published image and recreating the service:
-
-```bash
-docker compose -f server/compose.yaml pull
-docker compose -f server/compose.yaml up -d
-```
-
-## Processing architecture
-
-The Rust backend:
-
-1. Expands folders and probes supported media with FFprobe.
-2. Extracts a 24-bit WAV soundtrack from video sources.
-3. Runs each unique catalog-selected model locally.
-4. Finds the requested outputs, writes 24-bit WAV files, and pads/trims them to the probed source duration.
-5. For video sources, remuxes each selected stem against the original video stream without re-encoding the picture.
-
-The desktop app processes media directly on the Mac. The WebUI uploads media only to the Docker/WSL server the user opened; it is stored inside that server's configured job directory and is not sent to a third-party service.
-
-## Known prototype limits
-
-- macOS remains ad-hoc signed until Developer ID credentials are configured; notarization and dependency/model-license review are still required for polished public distribution.
-- Progress within one model pass is time-based because the upstream CLI does not expose a stable machine-readable percentage event stream.
-- Duration alignment is implemented; a production QA suite should additionally compare decoded sample counts and channel layouts across representative codecs and variable-frame-rate video.
-- The first catalog is a pragmatic starter, not a universal claim of quality. Separation quality varies by song, genre, arrangement, and whether the operator prioritizes fullness or low bleed.
-- Native Windows packaging, server authentication/TLS, durable job restoration, and crash-resume are not part of this prototype.
-
-## Verification
+Model recommendations come from the
+[Stem Separator Models](https://github.com/HAGerox/Stem-Separator-Models)
+registry. Verify changes with:
 
 ```bash
 npm run build
-cd src-tauri && cargo check
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-The interface was also exercised through select, expanded stems, progress, stop confirmation, results, and dark appearance states in the shared preview.
+## License
 
-The original managed runtime was provisioned against `audio-separator 0.44.5`, the catalog's BS-Roformer Viperx model was downloaded, and a two-second synthetic stereo file was separated end to end with Apple Silicon MPS/CoreML available. The custom combined-PR runtime is now pinned separately as described above.
+Stem Separator is available under the [MIT License](LICENSE). Models and other
+third-party components remain subject to their own licenses.
