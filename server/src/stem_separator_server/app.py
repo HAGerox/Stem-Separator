@@ -73,6 +73,14 @@ class UploadSession:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class MediaInfo:
+    duration: float | None = None
+    audio_stream_index: int | None = None
+    video_stream_index: int | None = None
+    inspected: bool = False
+
+
 JOBS: dict[str, Job] = {}
 UPLOADS: dict[str, UploadSession] = {}
 GPU_QUEUE = asyncio.Lock()
@@ -273,18 +281,50 @@ def matching_output(directory: Path, stem: str) -> Path | None:
     return sorted(matches)[0] if matches else None
 
 
-def probe_duration(path: Path) -> float | None:
+def probe_media(path: Path) -> MediaInfo:
     try:
         output = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration:stream=index,codec_type:stream_disposition=attached_pic",
+                "-of", "json", str(path),
+            ],
             check=True,
             capture_output=True,
             text=True,
         )
-        value = json.loads(output.stdout).get("format", {}).get("duration")
-        return float(value) if value is not None else None
+        payload = json.loads(output.stdout)
+        value = payload.get("format", {}).get("duration")
+        try:
+            duration = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            duration = None
+
+        audio_stream_index = None
+        video_stream_index = None
+        for stream in payload.get("streams") or []:
+            if not isinstance(stream, dict):
+                continue
+            index = stream.get("index")
+            if not isinstance(index, int):
+                continue
+            if stream.get("codec_type") == "audio" and audio_stream_index is None:
+                audio_stream_index = index
+            if (
+                stream.get("codec_type") == "video"
+                and (stream.get("disposition") or {}).get("attached_pic") != 1
+                and video_stream_index is None
+            ):
+                video_stream_index = index
+
+        return MediaInfo(
+            duration=duration,
+            audio_stream_index=audio_stream_index,
+            video_stream_index=video_stream_index,
+            inspected=True,
+        )
     except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError):
-        return None
+        return MediaInfo()
 
 
 def ensure_running(job: Job) -> None:
@@ -370,7 +410,13 @@ async def process_job(job_id: str) -> None:
             for file_index, filename in enumerate(job.filenames):
                 ensure_running(job)
                 input_path = job_dir / "input" / filename
-                duration = await asyncio.to_thread(probe_duration, input_path)
+                media = await asyncio.to_thread(probe_media, input_path)
+                duration = media.duration
+                if media.inspected and media.audio_stream_index is None:
+                    raise RuntimeError(
+                        f"{filename} has no audio track, so there is nothing to separate. "
+                        "Choose a file that contains audio."
+                    )
                 file_work = job_dir / "work" / f"file-{file_index}"
                 file_work.mkdir(parents=True, exist_ok=True)
                 job.file_index = file_index
@@ -378,14 +424,23 @@ async def process_job(job_id: str) -> None:
                 separation_input = input_path
                 if input_path.suffix.lower() in VIDEO_SUFFIXES:
                     separation_input = file_work / "source-audio.wav"
-                    job.stage = "Preparing video"
-                    job.detail = f"Extracting the soundtrack from {filename}"
+                    job.stage = "Preparing video" if media.video_stream_index is not None else "Preparing audio"
+                    job.detail = (
+                        f"Extracting the soundtrack from {filename}"
+                        if media.video_stream_index is not None
+                        else f"Converting the audio from {filename}"
+                    )
                     job.phase = "prepare"
                     job.phase_progress = 4.0
                     job.progress = file_base + file_share * 0.02
+                    audio_map = (
+                        f"0:{media.audio_stream_index}"
+                        if media.audio_stream_index is not None
+                        else "0:a:0?"
+                    )
                     await run_command(
                         [
-                            "ffmpeg", "-y", "-i", str(input_path), "-vn", "-map", "0:a:0?",
+                            "ffmpeg", "-y", "-i", str(input_path), "-vn", "-map", audio_map,
                             "-c:a", "pcm_s24le", "-ar", "44100", str(separation_input),
                         ],
                         job,
@@ -460,14 +515,15 @@ async def process_job(job_id: str) -> None:
                         "isVideo": False,
                         "durationSeconds": duration,
                     })
-                    if input_path.suffix.lower() in VIDEO_SUFFIXES:
+                    if media.video_stream_index is not None:
                         video_relative = Path(source_base) / f"{source_base}_{stem}.mp4" if len(job.filenames) > 1 else Path(f"{source_base}_{stem}.mp4")
                         video_target = output_root / video_relative
                         job.stage = f"Creating {stem.title()} video"
                         job.detail = "Replacing the source soundtrack without re-encoding the picture"
                         command = [
                             "ffmpeg", "-y", "-i", str(input_path), "-i", str(target),
-                            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+                            "-map", f"0:{media.video_stream_index}", "-map", "1:a:0",
+                            "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
                         ]
                         if duration is not None:
                             command.extend(["-t", f"{duration:.6f}"])

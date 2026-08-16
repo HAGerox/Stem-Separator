@@ -97,6 +97,11 @@ def test_video_audio_is_extracted_before_separation(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     commands = []
+    monkeypatch.setattr(
+        server_app,
+        "probe_media",
+        lambda path: server_app.MediaInfo(12.5, audio_stream_index=1, video_stream_index=0, inspected=True),
+    )
 
     async def fake_command(command, job, progress_range=None, **kwargs):
         commands.append(command)
@@ -124,8 +129,79 @@ def test_video_audio_is_extracted_before_separation(tmp_path, monkeypatch):
             time.sleep(0.01)
     assert job["status"] == "complete", job
     assert commands[0][0] == "ffmpeg"
-    assert "0:a:0?" in commands[0]
+    assert "0:1" in commands[0]
     assert commands[1][1].endswith("source-audio.wav")
+    assert commands[2][commands[2].index("-map") + 1] == "0:0"
+    assert [output["isVideo"] for output in job["outputs"]] == [False, True]
+
+
+def test_audio_only_webm_does_not_attempt_to_create_video(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+    freeze_registry(server_app, monkeypatch)
+    from fastapi.testclient import TestClient
+
+    commands = []
+    monkeypatch.setattr(
+        server_app,
+        "probe_media",
+        lambda path: server_app.MediaInfo(12.5, audio_stream_index=0, inspected=True),
+    )
+
+    async def fake_command(command, job, progress_range=None, **kwargs):
+        commands.append(command)
+        if command[0] == "ffmpeg":
+            server_app.Path(command[-1]).write_bytes(b"RIFFextracted")
+            return
+        output_dir = server_app.Path(command[command.index("--output_dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "song_(Vocals)_model.wav").write_bytes(b"RIFFvocals")
+
+    monkeypatch.setattr(server_app, "run_command", fake_command)
+    with TestClient(server_app.app) as client:
+        response = client.post(
+            "/api/jobs",
+            files={"file": ("song.webm", b"audio-only", "audio/webm")},
+            data={"stems": "vocals"},
+        )
+        job_id = response.json()["id"]
+        for _ in range(100):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in {"complete", "failed"}:
+                break
+            import time
+
+            time.sleep(0.01)
+
+    assert job["status"] == "complete", job
+    assert commands[0][commands[0].index("-map") + 1] == "0:0"
+    assert all("-c:v" not in command for command in commands)
+    assert [output["name"] for output in job["outputs"]] == ["song_vocals.wav"]
+
+
+def test_probe_media_ignores_embedded_cover_art(tmp_path, monkeypatch):
+    server_app = load_app(tmp_path, monkeypatch)
+
+    completed = server_app.subprocess.CompletedProcess(
+        args=["ffprobe"],
+        returncode=0,
+        stdout=server_app.json.dumps({
+            "streams": [
+                {"index": 0, "codec_type": "video", "disposition": {"attached_pic": 1}},
+                {"index": 1, "codec_type": "audio", "disposition": {"attached_pic": 0}},
+                {"index": 2, "codec_type": "video", "disposition": {"attached_pic": 0}},
+            ],
+            "format": {"duration": "42.25"},
+        }),
+        stderr="",
+    )
+    monkeypatch.setattr(server_app.subprocess, "run", lambda *args, **kwargs: completed)
+
+    media = server_app.probe_media(tmp_path / "clip.mkv")
+
+    assert media.duration == 42.25
+    assert media.audio_stream_index == 1
+    assert media.video_stream_index == 2
+    assert media.inspected is True
 
 
 def test_model_registry_exposes_only_compatible_stems(tmp_path, monkeypatch):
