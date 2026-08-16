@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -129,6 +129,9 @@ struct EngineCommand {
 struct ActiveJob {
     state: Arc<Mutex<ActiveJobState>>,
 }
+
+#[derive(Default)]
+struct SeparationStatus(AtomicBool);
 
 #[derive(Default)]
 struct ActiveJobState {
@@ -1593,10 +1596,21 @@ fn reveal_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn set_separation_active(status: State<'_, SeparationStatus>, active: bool) {
+    status.0.store(active, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(ActiveJob::default())
+        .manage(SeparationStatus::default())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1607,10 +1621,29 @@ pub fn run() {
             required_model_downloads,
             process_job,
             cancel_job,
-            reveal_path
+            reveal_path,
+            set_separation_active,
+            quit_app
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Stem Separator");
+        .build(tauri::generate_context!())
+        .expect("error while building Stem Separator");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            let separation_active = app_handle
+                .state::<SeparationStatus>()
+                .0
+                .load(Ordering::SeqCst);
+            if code.is_none() && separation_active {
+                api.prevent_exit();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                let _ = app_handle.emit("app-quit-requested", ());
+            }
+        }
+    });
 }
 
 #[cfg(test)]

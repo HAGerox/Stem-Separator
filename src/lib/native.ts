@@ -36,6 +36,16 @@ export async function cancelJob(jobId?: string): Promise<boolean> {
   return invoke<boolean>("cancel_job", { jobId });
 }
 
+export async function setSeparationActive(active: boolean): Promise<void> {
+  if (!inTauri) return;
+  await invoke("set_separation_active", { active });
+}
+
+export async function quitApp(): Promise<void> {
+  if (!inTauri) return;
+  await invoke("quit_app");
+}
+
 export async function checkForUpdate(): Promise<UpdateInfo> {
   if (!inTauri) return { configured: false, available: false, currentVersion: "browser" };
   return invoke<UpdateInfo>("check_for_update");

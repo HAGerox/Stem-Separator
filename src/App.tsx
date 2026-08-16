@@ -25,7 +25,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { availableStems, buildModelPlan, loadCatalog, recommendedMultiTrackModel, recommendedMultiTrackStems } from "./lib/catalog";
-import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, requiredModelDownloads, resolveInputs, revealPath } from "./lib/native";
+import { cancelJob, checkForUpdate, dragFile, inTauri, installUpdate, playableUrl, processJob, quitApp, requiredModelDownloads, resolveInputs, revealPath, setSeparationActive } from "./lib/native";
 import { cancelServerJob, processServerJob, startServerUpload } from "./lib/server";
 import type { ServerUploadHandle } from "./lib/server";
 import { serverMode } from "./lib/runtime";
@@ -610,6 +610,25 @@ function ConfirmStop({ stopping, onCancel, onConfirm }: { stopping: boolean; onC
   );
 }
 
+type ExitIntent = "close" | "quit";
+
+function ConfirmExit({ intent, stopping, onCancel, onConfirm }: { intent: ExitIntent; stopping: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const quitting = intent === "quit";
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={stopping ? undefined : onCancel}>
+      <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="exit-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="confirm-icon"><CircleAlert size={17} /></div>
+        <h2 id="exit-title">{quitting ? "Quit Stem Separator?" : "Close Stem Separator?"}</h2>
+        <p>Your separation is still running. {quitting ? "Quitting" : "Closing"} now will stop it, and any unfinished separation files will be lost.</p>
+        <div className="confirm-actions">
+          <button className="secondary-button" disabled={stopping} onClick={onCancel}>Keep processing</button>
+          <button className="danger-button" disabled={stopping} onClick={onConfirm}>{stopping ? <LoaderCircle className="spin" size={16} /> : null} {quitting ? "Quit anyway" : "Close anyway"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const demoMode = new URLSearchParams(window.location.search).has("demo");
   const [view, setView] = useState<View>("drop");
@@ -622,6 +641,7 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [exitIntent, setExitIntent] = useState<ExitIntent | null>(null);
   const [stopping, setStopping] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -639,10 +659,15 @@ export default function App() {
   const uploadGeneration = useRef(0);
   const filesRef = useRef<InputFile[]>(files);
   const viewRef = useRef<View>(view);
+  const allowWindowClose = useRef(false);
   const plan = useMemo(() => catalog ? buildModelPlan(catalog, selected, multiTrack) : [], [catalog, multiTrack, selected]);
 
   filesRef.current = files;
-  useEffect(() => { viewRef.current = view; }, [view]);
+  viewRef.current = view;
+
+  useEffect(() => {
+    void setSeparationActive(view === "processing").catch(() => undefined);
+  }, [view]);
 
   const beginBackgroundUpload = useCallback(() => {
     if (!serverMode || demoMode || filesRef.current.length === 0) return null;
@@ -752,6 +777,27 @@ export default function App() {
     return () => unlisten?.();
   }, []);
 
+  useEffect(() => {
+    if (!inTauri) return;
+    let unlistenClose: (() => void) | undefined;
+    let unlistenQuit: (() => void) | undefined;
+    getCurrentWindow().onCloseRequested((event) => {
+      if (viewRef.current !== "processing" || allowWindowClose.current) return;
+      event.preventDefault();
+      setConfirmStop(false);
+      setExitIntent("close");
+    }).then((dispose) => { unlistenClose = dispose; });
+    listen("app-quit-requested", () => {
+      if (viewRef.current !== "processing") {
+        void quitApp();
+        return;
+      }
+      setConfirmStop(false);
+      setExitIntent("quit");
+    }).then((dispose) => { unlistenQuit = dispose; });
+    return () => { unlistenClose?.(); unlistenQuit?.(); };
+  }, []);
+
   const pick = async (folder = false) => {
     setError(null);
     if (!inTauri) {
@@ -788,6 +834,8 @@ export default function App() {
       }
     }
     setPlannedDownloads(nextDownloads);
+    await setSeparationActive(true);
+    viewRef.current = "processing";
     setView("processing");
     setError(null);
     const startsWithVideo = files.some((file) => file.isVideo);
@@ -884,7 +932,27 @@ export default function App() {
       }
     }
     catch (reason) { setError(String(reason)); }
-    finally { activeServerJobId.current = null; starting.current = false; setStopping(false); setConfirmStop(false); setView("select"); }
+    finally {
+      activeServerJobId.current = null;
+      starting.current = false;
+      await setSeparationActive(false).catch(() => undefined);
+      setStopping(false);
+      setConfirmStop(false);
+      setExitIntent(null);
+      viewRef.current = "select";
+      setView("select");
+    }
+  };
+
+  const exitAfterStopping = async () => {
+    const intent = exitIntent;
+    if (!intent) return;
+    await stop();
+    if (intent === "quit") await quitApp();
+    else {
+      allowWindowClose.current = true;
+      await getCurrentWindow().close();
+    }
   };
 
   const reset = () => {
@@ -943,6 +1011,7 @@ export default function App() {
       {view === "results" && result && <ResultsView result={result} onReset={reset} onBack={goBack} />}
       {error && <div className="error-toast"><CircleAlert size={18} /><span>{error}</span><button onClick={() => setError(null)}><X size={16} /></button></div>}
       {view === "processing" && confirmStop && <ConfirmStop stopping={stopping} onCancel={() => setConfirmStop(false)} onConfirm={stop} />}
+      {view === "processing" && exitIntent && <ConfirmExit intent={exitIntent} stopping={stopping} onCancel={() => setExitIntent(null)} onConfirm={exitAfterStopping} />}
     </div>
   );
 }
