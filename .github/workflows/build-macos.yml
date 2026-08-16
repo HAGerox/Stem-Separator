@@ -11,6 +11,8 @@ on:
       - "catalog/**"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
       - "package*.json"
       - ".github/workflows/build-macos.yml"
   pull_request:
@@ -20,6 +22,8 @@ on:
       - "catalog/**"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
       - "package*.json"
       - ".github/workflows/build-macos.yml"
 
@@ -86,6 +90,8 @@ jobs:
           test -x "$APP_PATH/Contents/Resources/bin/ffmpeg"
           test -x "$APP_PATH/Contents/Resources/bin/ffprobe"
           test -x "$APP_PATH/Contents/Resources/bin/audio-separator"
+          test -f "$APP_PATH/Contents/Resources/STEM-SEPARATOR-LICENSE.txt"
+          test -f "$APP_PATH/Contents/Resources/THIRD-PARTY-NOTICES.md"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           "$APP_PATH/Contents/Resources/bin/ffmpeg" -version
           "$APP_PATH/Contents/Resources/bin/audio-separator" --version

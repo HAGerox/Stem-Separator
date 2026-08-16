@@ -20,6 +20,8 @@ for command in curl git uv; do
 done
 
 mkdir -p "$BIN_ROOT"
+install -m 0644 "$REPOSITORY_ROOT/LICENSE" "$RESOURCE_ROOT/STEM-SEPARATOR-LICENSE.txt"
+install -m 0644 "$REPOSITORY_ROOT/THIRD_PARTY_NOTICES.md" "$RESOURCE_ROOT/THIRD-PARTY-NOTICES.md"
 rm -f "$BIN_ROOT/uv" "$RESOURCE_ROOT/UV-LICENSE-APACHE.txt" "$RESOURCE_ROOT/UV-LICENSE-MIT.txt"
 curl --fail --location --retry 3 \
   "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/darwin-arm64.LICENSE" \

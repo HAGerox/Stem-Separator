@@ -9,6 +9,8 @@ on:
       - "server/**"
       - "src/**"
       - "catalog/**"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
       - "package*.json"
       - ".dockerignore"
       - ".github/workflows/build-wsl-cuda-server.yml"
@@ -53,6 +55,7 @@ jobs:
           mkdir -p artifacts bundle
           cp server/scripts/install-wsl.sh bundle/install.sh
           cp package-output/*.whl bundle/
+          cp LICENSE THIRD_PARTY_NOTICES.md bundle/
           tar -czf "artifacts/Stem-Separator-Linux-WSL-CUDA.tar.gz" -C bundle .
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

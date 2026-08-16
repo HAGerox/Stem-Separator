@@ -63,6 +63,7 @@ RUN apt-get update \
     && chown stem-separator:stem-separator /data /models \
     && rm -rf /var/lib/apt/lists/*
 
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/stem-separator/
 COPY --from=python-deps /opt/stem-separator /opt/stem-separator
 COPY --from=server-build /app/wheels /tmp/wheels
 RUN /opt/stem-separator/bin/pip install --no-deps /tmp/wheels/*.whl \

@@ -2,7 +2,9 @@
 
 Stem Separator turns songs into individual parts such as vocals, drums, bass,
 guitar, piano, and instrumentals. Add an audio or video file, choose the stems
-you want, and let the app create separate WAV files for each part.
+you want, and let the app create separate WAV files for each part. You choose
+the stem, not the model: Stem Separator automatically selects the strongest
+compatible model for each part from its maintained model registry.
 
 Everything runs locally. Your media is processed on your own Mac or on a server
 you control, and is never uploaded to a third-party separation service.
@@ -11,7 +13,7 @@ you control, and is never uploaded to a third-party separation service.
 
 - Simple drag-and-drop workflow for audio, video, and folders
 - Individual stem selection or a complete multi-track split
-- Carefully selected models for different instruments
+- Automatic model selection tailored to each requested stem
 - Progress, cancellation, playback, and quick access to finished files
 - Video outputs that keep the original picture with the separated audio
 - Automatic model downloads and updates
@@ -64,5 +66,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## License
 
-Stem Separator is available under the [MIT License](LICENSE). Models and other
-third-party components remain subject to their own licenses.
+Stem Separator's original source code is available under the
+[MIT License](LICENSE). Models and other third-party components remain subject
+to their own licenses; see [Third-Party Notices](THIRD_PARTY_NOTICES.md) for
+credits and current distribution caveats.
