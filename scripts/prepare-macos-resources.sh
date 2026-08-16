@@ -7,44 +7,73 @@ BIN_ROOT="$RESOURCE_ROOT/bin"
 RUNTIME_ROOT="$RESOURCE_ROOT/runtime"
 PYTHON_ROOT="$RESOURCE_ROOT/python"
 AUDIO_SEPARATOR_COMMIT="dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3"
-FFMPEG_RELEASE="b6.1.1"
-FFMPEG_SHA256="a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
-FFPROBE_SHA256="bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64"
+FFMPEG_VERSION="9.0.1"
+FFMPEG_SOURCE_SHA256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
+FFMPEG_SOURCE_URL="https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "The macOS resource bundle must be prepared on Apple Silicon." >&2
   exit 1
 fi
-for command in curl git uv; do
+for command in clang curl git make tar uv; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
-mkdir -p "$BIN_ROOT"
+BUILD_ROOT="$(mktemp -d)"
+trap 'rm -rf "$BUILD_ROOT"' EXIT
+ARTIFACT_ROOT="$REPOSITORY_ROOT/artifacts"
+FFMPEG_SOURCE_ARCHIVE="$ARTIFACT_ROOT/FFmpeg-$FFMPEG_VERSION-source.tar.xz"
+
+mkdir -p "$BIN_ROOT" "$ARTIFACT_ROOT"
 install -m 0644 "$REPOSITORY_ROOT/LICENSE" "$RESOURCE_ROOT/STEM-SEPARATOR-LICENSE.txt"
 install -m 0644 "$REPOSITORY_ROOT/THIRD_PARTY_NOTICES.md" "$RESOURCE_ROOT/THIRD-PARTY-NOTICES.md"
 rm -f "$BIN_ROOT/uv" "$RESOURCE_ROOT/UV-LICENSE-APACHE.txt" "$RESOURCE_ROOT/UV-LICENSE-MIT.txt"
 curl --fail --location --retry 3 \
-  "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/darwin-arm64.LICENSE" \
-  --output "$RESOURCE_ROOT/FFMPEG-LICENSE.txt" &
-license_download_pid=$!
-curl --fail --location --retry 3 \
-  "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/ffmpeg-darwin-arm64" \
-  --output "$BIN_ROOT/ffmpeg" &
-ffmpeg_download_pid=$!
-curl --fail --location --retry 3 \
-  "https://github.com/eugeneware/ffmpeg-static/releases/download/$FFMPEG_RELEASE/ffprobe-darwin-arm64" \
-  --output "$BIN_ROOT/ffprobe" &
-ffprobe_download_pid=$!
-wait "$license_download_pid"
-wait "$ffmpeg_download_pid"
-wait "$ffprobe_download_pid"
-echo "$FFMPEG_SHA256  $BIN_ROOT/ffmpeg" | shasum -a 256 --check
-echo "$FFPROBE_SHA256  $BIN_ROOT/ffprobe" | shasum -a 256 --check
-chmod 755 "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe"
+  "$FFMPEG_SOURCE_URL" \
+  --output "$FFMPEG_SOURCE_ARCHIVE"
+echo "$FFMPEG_SOURCE_SHA256  $FFMPEG_SOURCE_ARCHIVE" | shasum -a 256 --check
+tar -xf "$FFMPEG_SOURCE_ARCHIVE" -C "$BUILD_ROOT"
+FFMPEG_SOURCE_ROOT="$BUILD_ROOT/ffmpeg-$FFMPEG_VERSION"
+FFMPEG_INSTALL_ROOT="$BUILD_ROOT/ffmpeg-install"
+(
+  cd "$FFMPEG_SOURCE_ROOT"
+  ./configure \
+    --prefix="$FFMPEG_INSTALL_ROOT" \
+    --arch=arm64 \
+    --cc=clang \
+    --disable-debug \
+    --disable-doc \
+    --disable-ffplay \
+    --disable-network \
+    --disable-autodetect \
+    --enable-small \
+    --enable-static \
+    --disable-shared
+  make -j"$(sysctl -n hw.logicalcpu)" ffmpeg ffprobe
+)
+install -m 0755 "$FFMPEG_SOURCE_ROOT/ffmpeg" "$BIN_ROOT/ffmpeg"
+install -m 0755 "$FFMPEG_SOURCE_ROOT/ffprobe" "$BIN_ROOT/ffprobe"
+install -m 0644 "$FFMPEG_SOURCE_ROOT/COPYING.LGPLv2.1" "$RESOURCE_ROOT/FFMPEG-LICENSE.txt"
+cat > "$RESOURCE_ROOT/FFMPEG-BUILD.txt" <<EOF
+FFmpeg $FFMPEG_VERSION
+
+Source: $FFMPEG_SOURCE_URL
+SHA-256: $FFMPEG_SOURCE_SHA256
+Source modifications: none
+
+Configure options:
+--arch=arm64 --cc=clang --disable-debug --disable-doc --disable-ffplay
+--disable-network --disable-autodetect --enable-small --enable-static
+--disable-shared
+
+The exact source archive is included with each macOS GitHub release.
+EOF
+if "$BIN_ROOT/ffmpeg" -version 2>&1 | grep -Eq -- '--enable-(gpl|nonfree)'; then
+  echo "Refusing to bundle an FFmpeg build with GPL or nonfree components enabled." >&2
+  exit 1
+fi
 codesign --force --sign - "$BIN_ROOT/ffmpeg" "$BIN_ROOT/ffprobe"
 
-BUILD_ROOT="$(mktemp -d)"
-trap 'rm -rf "$BUILD_ROOT"' EXIT
 WHEEL_ROOT="$BUILD_ROOT/wheels"
 mkdir -p "$WHEEL_ROOT"
 git clone --filter=blob:none --no-checkout https://github.com/HAGerox/python-audio-separator.git "$BUILD_ROOT/python-audio-separator"

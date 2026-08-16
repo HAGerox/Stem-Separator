@@ -69,4 +69,4 @@ cargo check --manifest-path src-tauri/Cargo.toml
 Stem Separator's original source code is available under the
 [MIT License](LICENSE). Models and other third-party components remain subject
 to their own licenses; see [Third-Party Notices](THIRD_PARTY_NOTICES.md) for
-credits and current distribution caveats.
+the small set of relevant bundled-component notices.

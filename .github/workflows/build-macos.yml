@@ -92,6 +92,9 @@ jobs:
           test -x "$APP_PATH/Contents/Resources/bin/audio-separator"
           test -f "$APP_PATH/Contents/Resources/STEM-SEPARATOR-LICENSE.txt"
           test -f "$APP_PATH/Contents/Resources/THIRD-PARTY-NOTICES.md"
+          test -f "$APP_PATH/Contents/Resources/FFMPEG-LICENSE.txt"
+          test -f "$APP_PATH/Contents/Resources/FFMPEG-BUILD.txt"
+          ! "$APP_PATH/Contents/Resources/bin/ffmpeg" -version 2>&1 | grep -Eq -- '--enable-(gpl|nonfree)'
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           "$APP_PATH/Contents/Resources/bin/ffmpeg" -version
           "$APP_PATH/Contents/Resources/bin/audio-separator" --version
@@ -154,6 +157,7 @@ jobs:
           subject-path: |
             artifacts/Stem-Separator-macOS-update.tar.gz
             artifacts/Stem-Separator-macOS.dmg
+            artifacts/FFmpeg-9.0.1-source.tar.xz
 
       - name: Publish macOS release assets
         env:
@@ -166,6 +170,7 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             artifacts/Stem-Separator-macOS.dmg \
             artifacts/Stem-Separator-macOS-update.tar.gz \
+            artifacts/FFmpeg-9.0.1-source.tar.xz \
             artifacts/latest.json \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
