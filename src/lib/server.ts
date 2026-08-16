@@ -29,6 +29,7 @@ type ServerJob = {
   fileCount?: number;
   file_count?: number;
   outputs?: ServerOutput[];
+  warnings?: string[];
   error?: string;
   downloadUrl?: string;
 };
@@ -184,7 +185,9 @@ export async function processServerJob(
         isVideo: output.isVideo,
         durationSeconds: output.durationSeconds,
       })),
-      warnings: [],
+      warnings: (job.warnings || []).filter((warning): warning is string => (
+        typeof warning === "string" && warning.length > 0
+      )),
       usedDemoMode: false,
     };
   }

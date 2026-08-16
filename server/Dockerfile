@@ -12,7 +12,7 @@ RUN npm run build:server-web
 
 FROM nvidia/cuda:12.8.2-base-ubuntu24.04 AS python-deps
 
-ARG AUDIO_SEPARATOR_COMMIT=dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3
+ARG AUDIO_SEPARATOR_COMMIT=e66045e5f0a06206d9ea5062cc7dd53df22d38c0
 ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/stem-separator \
     PATH=/opt/stem-separator/bin:$PATH

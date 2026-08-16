@@ -21,7 +21,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma",
 ];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
-const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3";
+const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@e66045e5f0a06206d9ea5062cc7dd53df22d38c0";
 static ARTIFACT_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn bundled_resource(command: &str) -> Option<PathBuf> {

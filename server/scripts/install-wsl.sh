@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="${STEM_SEPARATOR_INSTALL_DIR:-$HOME/.local/share/stem-separator-server/runtime}"
 BIN_DIR="${STEM_SEPARATOR_BIN_DIR:-$HOME/.local/bin}"
-AUDIO_SEPARATOR_COMMIT="dccdbe5fafa8d2c4274ebf76a3ff1c27bf0c86d3"
+AUDIO_SEPARATOR_COMMIT="e66045e5f0a06206d9ea5062cc7dd53df22d38c0"
 
 if [[ ! -r /proc/sys/kernel/osrelease ]] || ! grep -qi microsoft /proc/sys/kernel/osrelease; then
   echo "Warning: this installer is intended for Ubuntu on WSL2." >&2
