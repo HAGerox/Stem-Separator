@@ -688,6 +688,12 @@ fn validate_model_run(run: &ModelRun) -> Result<(), String> {
     }
     runtime_weight_artifact(run)?;
     runtime_config_artifact(run)?;
+    if run.outputs.is_empty() {
+        return Err(format!(
+            "The registry did not supply exact output bindings for {}.",
+            run.model_name
+        ));
+    }
     let mut capabilities = HashSet::new();
     for output in &run.outputs {
         if output.capability.trim().is_empty()
@@ -709,15 +715,23 @@ fn validate_model_run(run: &ModelRun) -> Result<(), String> {
             ));
         }
     }
+    if let Some(stem) = run
+        .stems
+        .iter()
+        .find(|stem| !capabilities.contains(stem.as_str()))
+    {
+        return Err(format!(
+            "The registry did not supply an exact output binding for {} on {}.",
+            title_case(stem),
+            run.model_name
+        ));
+    }
     Ok(())
 }
 
 fn runtime_key_for_capability<'a>(run: &'a ModelRun, capability: &'a str) -> Option<&'a str> {
     if !run.stems.iter().any(|stem| stem == capability) {
         return None;
-    }
-    if run.outputs.is_empty() {
-        return Some(capability);
     }
     run.outputs
         .iter()
@@ -1618,15 +1632,6 @@ async fn process_job(
     }
 
     let active_runs = run_for_capability.values().copied().collect::<HashSet<_>>();
-    for index in &active_runs {
-        let run = &request.plan[*index];
-        if run.outputs.is_empty() {
-            warnings.push(format!(
-                "{} uses the legacy plan format. Its requested outputs will only be accepted when audio-separator returns the exact same parenthesized output token.",
-                run.model_name
-            ));
-        }
-    }
 
     for (index, run) in request.plan.iter().enumerate() {
         if !active_runs.contains(&index) || run_failures[index].is_some() {
@@ -2066,7 +2071,7 @@ mod tests {
         find_exact_output, has_audio_stream, install_verified_part, is_corrupt_checkpoint_error,
         model_artifacts_present, model_artifacts_ready, runtime_key_for_capability,
         runtime_key_from_output_name, safe_artifact_name, sha256_file, silent_video_message,
-        stage_verified_artifact, validate_model_run, ModelArtifact, ModelRun,
+        stage_verified_artifact, validate_model_run, ModelArtifact, ModelOutputBinding, ModelRun,
     };
     use std::{
         fs,
@@ -2105,6 +2110,21 @@ mod tests {
 
         assert_eq!(runtime_key_for_capability(&run, "hihat"), Some("hh"));
         assert_eq!(runtime_key_for_capability(&run, "hh"), None);
+    }
+
+    #[test]
+    fn missing_registry_output_binding_is_rejected() {
+        let run: ModelRun = serde_json::from_value(serde_json::json!({
+            "modelFilename": "drums.ckpt",
+            "modelName": "Detailed drums",
+            "stems": ["hihat"]
+        }))
+        .unwrap();
+
+        assert_eq!(runtime_key_for_capability(&run, "hihat"), None);
+        assert!(validate_model_run(&run)
+            .unwrap_err()
+            .contains("did not supply exact output bindings"));
     }
 
     #[test]
@@ -2178,7 +2198,10 @@ mod tests {
             model_filename: "runtime-name.ckpt".into(),
             model_name: "Renamed model".into(),
             stems: vec!["vocals".into()],
-            outputs: Vec::new(),
+            outputs: vec![ModelOutputBinding {
+                capability: "vocals".into(),
+                runtime_key: "Vocals".into(),
+            }],
             artifacts: vec![
                 ModelArtifact {
                     name: "upstream-name.ckpt".into(),
@@ -2230,7 +2253,10 @@ mod tests {
             model_filename: "runtime.ckpt".into(),
             model_name: "Ambiguous model".into(),
             stems: vec!["vocals".into()],
-            outputs: Vec::new(),
+            outputs: vec![ModelOutputBinding {
+                capability: "vocals".into(),
+                runtime_key: "Vocals".into(),
+            }],
             artifacts: vec![artifact("first.ckpt"), artifact("second.ckpt")],
         };
         assert!(validate_model_run(&ambiguous)

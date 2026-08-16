@@ -15,79 +15,13 @@ REGISTRY_URL = os.getenv(
 REFRESH_SECONDS = int(os.getenv("STEM_SEPARATOR_MODEL_REGISTRY_REFRESH_SECONDS", "21600"))
 MAX_CACHE_AGE_SECONDS = int(os.getenv("STEM_SEPARATOR_MODEL_REGISTRY_MAX_CACHE_AGE_SECONDS", str(30 * 24 * 60 * 60)))
 
-FALLBACK = {
-    "generatedAt": "2026-08-16",
-    "source": "bundled fallback",
-    "models": {
-        "becruily-deux": {
-            "name": "Becruily Deux",
-            "filename": "becruily_deux.ckpt",
-            "stems": ["vocals", "instrumental"],
-            "bindings": {"vocals": "vocals", "instrumental": "instrumental"},
-            "license": "CC-BY-NC-4.0",
-            "status": "current",
-            "artifacts": [
-                {
-                    "name": "becruily_deux.ckpt",
-                    "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/becruily_deux.ckpt",
-                    "sha256": "10255c02295bf3e3865d4ee50ff752d7b19b124ed5fd93b147babc4333eda3aa",
-                },
-                {
-                    "name": "config_deux_becruily.yaml",
-                    "url": "https://huggingface.co/becruily/mel-band-roformer-deux/resolve/2da74427d682a3df47a774378fc24d7a1a0cdaad/config_deux_becruily.yaml",
-                    "sha256": "bb3ea9bce37ca96d63568490d5a92d7e41df3d7726788b6970c10d89eb62d902",
-                },
-            ],
-        },
-        "bs-roformer-sw": {
-            "name": "BS RoFormer SW 6-Stem",
-            "filename": "BS-Roformer-SW.ckpt",
-            "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
-            "bindings": {
-                "vocals": "vocals", "drums": "drums", "bass": "bass",
-                "guitar": "guitar", "piano": "piano", "other": "other",
-            },
-            "artifacts": [
-                {
-                    "name": "BS-Roformer-SW.ckpt",
-                    "url": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/BS-Roformer-SW.ckpt",
-                    "sha256": "24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e",
-                },
-                {
-                    "name": "BS-Roformer-SW.yaml",
-                    "url": "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/BS-Roformer-SW.yaml",
-                    "sha256": "b558996f1e25eb48798bd6502505a5de94c4f966d6edfb1a0420f06cc40b501a",
-                },
-            ],
-        },
-    },
-    "recommendations": {
-        "vocals": "becruily-deux",
-        "instrumental": "becruily-deux",
-        "drums": "bs-roformer-sw",
-        "bass": "bs-roformer-sw",
-        "guitar": "bs-roformer-sw",
-        "piano": "bs-roformer-sw",
-        "other": "bs-roformer-sw",
-        "multitrack": "bs-roformer-sw",
-    },
-    "capabilities": {
-        stem: {
-            "id": stem,
-            "label": stem.replace("_", " ").title(),
-            "kind": "complement" if stem == "instrumental" else "stem",
-            "group": "other",
-            "family": "other",
-        }
-        for stem in (
-            "vocals", "instrumental", "drums", "bass", "guitar", "piano",
-            "other",
-        )
-    },
-    "productProfile": {
-        "promoted": ["vocals", "instrumental", "drums", "bass", "guitar", "piano"],
-        "browseKinds": ["stem", "complement"],
-    },
+EMPTY_CATALOG = {
+    "generatedAt": None,
+    "source": "model registry unavailable",
+    "models": {},
+    "recommendations": {},
+    "capabilities": {},
+    "productProfile": {"promoted": [], "browseKinds": ["stem", "complement"]},
 }
 
 
@@ -121,7 +55,7 @@ class ModelRegistry:
     def __init__(self, cache_root: Path):
         self.cache_file = cache_root / "model-registry.json"
         self.meta_file = cache_root / "model-registry-meta.json"
-        self.catalog = FALLBACK
+        self.catalog = EMPTY_CATALOG
         self.etag: str | None = None
         self.last_checked = 0.0
         self.remote = False
@@ -137,7 +71,7 @@ class ModelRegistry:
             self.etag = meta.get("etag")
             self.remote = True
         except (OSError, ValueError, TypeError, KeyError):
-            self.catalog = FALLBACK
+            self.catalog = EMPTY_CATALOG
 
     @staticmethod
     def _artifacts(model: dict) -> list[dict]:
@@ -362,9 +296,7 @@ class ModelRegistry:
             return {}
         bindings: dict[str, str] = {}
         for output in outputs:
-            if isinstance(output, str):
-                capability = runtime_key = output
-            elif isinstance(output, dict):
+            if isinstance(output, dict):
                 capability = output.get("capability")
                 runtime_key = output.get("runtime_key")
             else:
@@ -418,7 +350,7 @@ class ModelRegistry:
     def _convert(cls, payload: dict) -> dict:
         if payload.get("schema") == 1 and isinstance(payload.get("capabilities"), list):
             return cls._convert_product_catalog(payload)
-        if payload.get("schema") != 3 or not isinstance(payload.get("models"), list):
+        if payload.get("schema") not in {3, 4} or not isinstance(payload.get("models"), list):
             raise ValueError("Unsupported model registry schema")
         source_models = {model["id"]: model for model in payload["models"]}
         models: dict[str, dict] = {}

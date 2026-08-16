@@ -3,38 +3,88 @@
   "$id": "https://stemseparator.app/catalog/schema.v1.json",
   "title": "Stem Separator model catalog",
   "type": "object",
-  "required": ["schemaVersion", "generatedAt", "models"],
+  "required": ["schemaVersion", "generatedAt", "models", "recommendations", "capabilities"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "generatedAt": { "type": "string", "format": "date-time" },
+    "generatedAt": { "type": "string", "minLength": 1 },
     "sourceLabel": { "type": "string" },
-    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
     "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
-    "futureProviders": { "type": "array", "items": { "type": "object" } }
+    "recommendations": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/capabilityId" },
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "capabilities": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/capabilityId" },
+      "additionalProperties": { "$ref": "#/$defs/capability" }
+    },
+    "promoted": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capabilityId" },
+      "uniqueItems": true
+    },
+    "groups": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "multiTrack": {
+      "type": "object",
+      "required": ["modelId", "stems"],
+      "properties": {
+        "modelId": { "type": "string", "minLength": 1 },
+        "stems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capabilityId" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
   },
   "$defs": {
-    "source": {
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$"
+    },
+    "runtimeKey": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\\\/\\u0000-\\u001f\\u007f]+$"
+    },
+    "artifact": {
       "type": "object",
-      "required": ["name", "url", "kind"],
+      "required": ["name", "url", "sha256"],
       "properties": {
-        "name": { "type": "string" },
-        "url": { "type": "string", "format": "uri" },
-        "kind": { "type": "string" }
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["capability", "runtimeKey"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/capabilityId" },
+        "runtimeKey": { "$ref": "#/$defs/runtimeKey" },
+        "label": { "type": "string", "minLength": 1 }
       }
     },
     "model": {
       "type": "object",
-      "required": ["id", "filename", "name", "provider", "runtime", "architecture", "stems", "quality", "speed", "memory", "status"],
+      "required": [
+        "id", "filename", "name", "architecture", "stems", "quality", "speed",
+        "memory", "status", "runtimeValidated", "outputs"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "filename": { "type": "string" },
-        "name": { "type": "string" },
-        "provider": { "type": "string" },
-        "runtime": { "enum": ["local", "remote"] },
-        "architecture": { "type": "string" },
+        "id": { "type": "string", "minLength": 1 },
+        "filename": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
         "stems": {
           "type": "array",
-          "items": { "enum": ["vocals", "instrumental", "drums", "bass", "guitar", "piano", "kick", "snare", "toms", "hihat", "cymbals", "other"] },
+          "items": { "$ref": "#/$defs/capabilityId" },
           "minItems": 1,
           "uniqueItems": true
         },
@@ -44,20 +94,27 @@
         "note": { "type": "string" },
         "source": { "type": "string" },
         "license": { "type": "string" },
-        "artifacts": {
+        "status": { "type": "string", "minLength": 1 },
+        "runtimeValidated": { "const": true },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+        "outputs": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name", "url", "sha256"],
-            "properties": {
-              "name": { "type": "string" },
-              "url": { "type": "string", "format": "uri", "pattern": "^https://" },
-              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
-            }
-          }
-        },
-        "scores": { "type": "object" },
-        "status": { "enum": ["verified", "experimental", "deprecated", "research-only"] }
+          "items": { "$ref": "#/$defs/output" },
+          "minItems": 1
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": ["id", "label", "kind", "group", "groupLabel"],
+      "properties": {
+        "id": { "$ref": "#/$defs/capabilityId" },
+        "label": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["stem", "complement", "preset", "transform", "workflow"] },
+        "group": { "type": "string", "minLength": 1 },
+        "groupLabel": { "type": "string", "minLength": 1 },
+        "glyph": { "type": "string", "minLength": 1 },
+        "promoted": { "type": "boolean" }
       }
     }
   }

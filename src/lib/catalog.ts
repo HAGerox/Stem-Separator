@@ -16,7 +16,7 @@ type RegistryBackend = {
   state?: string;
   validated?: boolean;
   model_filename?: string;
-  outputs?: Array<string | {
+  outputs?: Array<{
     runtime_key?: string;
     runtimeKey?: string;
     capability?: string;
@@ -188,7 +188,7 @@ function catalogCapability(id: string, metadata?: RegistryCapability): CatalogCa
 function validRegistry(value: unknown): value is Registry {
   if (!value || typeof value !== "object") return false;
   const registry = value as Partial<Registry>;
-  return registry.schema === 3
+  return (registry.schema === 3 || registry.schema === 4)
     && typeof registry.generated_at === "string"
     && Array.isArray(registry.models)
     && !!registry.recommendations
@@ -233,9 +233,6 @@ function modelOutputs(model: RegistryModel): ModelOutput[] {
 
 function normalizedOutputs(outputs: RegistryBackend["outputs"]): ModelOutput[] {
   return (outputs || []).flatMap((output) => {
-    if (typeof output === "string") return validIdentifier(output, true) && validIdentifier(output)
-      ? [{ capability: output, runtimeKey: output }]
-      : [];
     const runtimeKey = output.runtime_key || output.runtimeKey;
     if (!runtimeKey || !output.capability
       || !validIdentifier(output.capability, true) || !validIdentifier(runtimeKey)) return [];
@@ -388,8 +385,8 @@ export function catalogFromRegistry(registry: Registry): Catalog {
     const filename = modelFilename(model);
     if (!filename || !validIdentifier(filename)) continue;
     const outputs = modelOutputs(model);
-    const stems = (model.tasks || []).filter((task) => outputs.length === 0
-      || outputs.some((output) => output.capability === task));
+    const stems = (model.tasks || []).filter((task) =>
+      outputs.some((output) => output.capability === task));
     if (!stems.length) continue;
     selectedModels.set(model.id, {
       id: `audio-separator:${model.id}`,
@@ -546,7 +543,10 @@ export function recommendedMultiTrackModel(catalog: Catalog | null): CatalogMode
 }
 
 export function recommendedMultiTrackStems(catalog: Catalog | null): StemId[] {
-  return catalog?.multiTrack?.stems || recommendedMultiTrackModel(catalog)?.stems || [];
+  const model = recommendedMultiTrackModel(catalog);
+  const stems = catalog?.multiTrack?.stems || model?.stems || [];
+  return model && stems.every((stem) =>
+    model.outputs?.some((output) => output.capability === stem)) ? stems : [];
 }
 
 export function availableStems(catalog: Catalog | null): StemId[] {
@@ -581,7 +581,7 @@ export function availableCapabilities(catalog: Catalog | null): CatalogCapabilit
       : catalog.models.find((candidate) => usableCatalogModel(candidate) && candidate.stems.includes(id));
     if (!model || !model.stems.includes(id)) return [];
     if (!usableCatalogModel(model)) return [];
-    if (model.outputs?.length && !model.outputs.some((output) => output.capability === id)) return [];
+    if (!model.outputs?.some((output) => output.capability === id)) return [];
     return [metadata];
   }).sort((a, b) => {
     const aGroup = catalog.groups?.indexOf(a.group) ?? -1;
@@ -600,15 +600,16 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack 
   if (multiTrack) {
     const model = recommendedMultiTrackModel(catalog);
     const stems = recommendedMultiTrackStems(catalog);
-    if (model && stems.length) return [{
+    const outputs = stems.flatMap((stem) => {
+      const output = model?.outputs?.find((candidate) => candidate.capability === stem);
+      return output ? [output] : [];
+    });
+    if (model && stems.length && outputs.length === stems.length) return [{
       modelFilename: model.filename,
       modelName: model.name,
       stems,
       artifacts: model.artifacts,
-      outputs: stems.flatMap((stem) => {
-        const output = model.outputs?.find((candidate) => candidate.capability === stem);
-        return output ? [output] : [];
-      }),
+      outputs,
     }];
   }
 
@@ -620,9 +621,11 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack 
   for (const stem of selected) {
     const preferred = recommendation(catalog, stem);
     const model = usableCatalogModel(preferred) && preferred.stems.includes(stem)
+      && preferred.outputs?.some((output) => output.capability === stem)
       ? preferred
       : catalog.models
-        .filter((candidate) => usableCatalogModel(candidate) && candidate.stems.includes(stem))
+        .filter((candidate) => usableCatalogModel(candidate) && candidate.stems.includes(stem)
+          && candidate.outputs?.some((output) => output.capability === stem))
         .sort((a, b) => b.quality - a.quality || b.speed - a.speed)[0];
     if (!model) continue;
     const existing = runsByModel.get(model.id);

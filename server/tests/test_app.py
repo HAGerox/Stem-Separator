@@ -17,6 +17,49 @@ def load_app(tmp_path, monkeypatch):
 
 
 def freeze_registry(server_app, monkeypatch):
+    server_app.REGISTRY.catalog = {
+        "generatedAt": "2026-08-16",
+        "source": "test catalogue",
+        "models": {
+            "becruily-deux": {
+                "name": "Becruily Deux",
+                "filename": "becruily_deux.ckpt",
+                "stems": ["vocals", "instrumental"],
+                "bindings": {"vocals": "Vocals", "instrumental": "Instrumental"},
+                "license": "CC-BY-NC-4.0",
+                "status": "current",
+                "artifacts": [{
+                    "name": "becruily_deux.ckpt",
+                    "url": "https://example.test/becruily_deux.ckpt",
+                    "sha256": "a" * 64,
+                }],
+            },
+            "bs-roformer-sw": {
+                "name": "BS RoFormer SW 6-Stem",
+                "filename": "BS-Roformer-SW.ckpt",
+                "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+                "bindings": {
+                    "vocals": "vocals", "drums": "drums", "bass": "bass",
+                    "guitar": "guitar", "piano": "piano", "other": "other",
+                },
+                "artifacts": [],
+            },
+        },
+        "recommendations": {
+            "vocals": "becruily-deux", "instrumental": "becruily-deux",
+            "drums": "bs-roformer-sw", "bass": "bs-roformer-sw",
+            "guitar": "bs-roformer-sw", "piano": "bs-roformer-sw",
+            "other": "bs-roformer-sw", "multitrack": "bs-roformer-sw",
+        },
+        "capabilities": {
+            stem: {"id": stem, "label": stem.title(), "kind": "stem", "group": "other"}
+            for stem in ("vocals", "instrumental", "drums", "bass", "guitar", "piano", "other")
+        },
+        "productProfile": {
+            "promoted": ["vocals", "instrumental", "drums", "bass", "guitar", "piano"],
+            "browseKinds": ["stem", "complement"],
+        },
+    }
     monkeypatch.setattr(server_app.REGISTRY, "refresh", lambda force=False: False)
 
     async def fake_artifacts(job, model, model_index, model_count):
@@ -233,12 +276,23 @@ def test_registry_builds_capability_aware_plan(tmp_path, monkeypatch):
     assert payload["catalog"]["recommendations"]["vocals"] == "becruily-deux"
 
 
+def test_registry_without_cache_or_remote_data_fails_closed(tmp_path):
+    from stem_separator_server.model_registry import ModelRegistry
+
+    registry = ModelRegistry(tmp_path)
+
+    assert registry.stems() == []
+    assert registry.payload()["models"] == []
+    with pytest.raises(ValueError, match="No compatible recommended model"):
+        registry.plan(["vocals"])
+
+
 def test_registry_accepts_verified_direct_model_artifacts(tmp_path):
     from stem_separator_server.model_registry import ModelRegistry
 
     digest = "a" * 64
     converted = ModelRegistry._convert({
-        "schema": 3,
+        "schema": 4,
         "generated_at": "2026-08-14",
         "models": [{
             "id": "becruily-deux",
@@ -352,6 +406,29 @@ def test_registry_uses_dynamic_typed_capabilities_and_exact_bindings():
     assert registry.stems() == ["accordion", "hihat"]
     assert registry.plan(["hihat"])[0].runtime_key("hihat") == "hh"
     assert converted["productProfile"]["promoted"] == ["accordion"]
+
+
+def test_registry_rejects_legacy_string_output_bindings():
+    from stem_separator_server.model_registry import ModelRegistry
+
+    with pytest.raises(ValueError, match="no audio-separator-compatible recommendations"):
+        ModelRegistry._convert({
+            "schema": 3,
+            "generated_at": "2026-08-16",
+            "models": [{
+                "id": "legacy",
+                "name": "Legacy",
+                "tasks": ["hihat"],
+                "availability": {"state": "public_weights", "artifacts": []},
+                "backends": {"audio_separator": {
+                    "state": "validated",
+                    "validated": True,
+                    "model_filename": "legacy.ckpt",
+                    "outputs": ["hihat"],
+                }},
+            }],
+            "recommendations": {"hihat": {"model": "legacy", "alternatives": []}},
+        })
 
 
 def test_server_consumes_only_ready_entries_from_generated_product_catalogue():
