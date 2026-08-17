@@ -23,6 +23,8 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
 const AUDIO_SEPARATOR_REVISION: &str = include_str!("../../audio-separator-revision.txt");
 static ARTIFACT_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "macos")]
+const APP_QUIT_MENU_ID: &str = "stem-separator-quit";
 
 fn bundled_resource(command: &str) -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
@@ -2025,6 +2027,26 @@ fn set_separation_active(status: State<'_, SeparationStatus>, active: bool) {
     status.0.store(active, Ordering::SeqCst);
 }
 
+fn separation_is_active<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
+    app.state::<SeparationStatus>().0.load(Ordering::SeqCst)
+}
+
+fn show_quit_confirmation<R: tauri::Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit("app-quit-requested", ());
+}
+
+fn request_app_quit<R: tauri::Runtime>(app: &AppHandle<R>) {
+    if separation_is_active(app) {
+        show_quit_confirmation(app);
+    } else {
+        app.exit(0);
+    }
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
@@ -2032,7 +2054,7 @@ fn quit_app(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(ActiveJob::default())
         .manage(SeparationStatus::default())
         .plugin(tauri_plugin_drag::init())
@@ -2048,23 +2070,47 @@ pub fn run() {
             reveal_path,
             set_separation_active,
             quit_app
-        ])
+        ]);
+
+    // Cocoa's standard Quit item handles Command-Q by terminating the app
+    // directly, bypassing Tauri's ExitRequested event. Replace only that item
+    // with an application-owned command so active work reaches the same guard
+    // as every other quit route.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(|handle| {
+            let menu = tauri::menu::Menu::default(handle)?;
+            if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) =
+                menu.items()?.into_iter().next()
+            {
+                let last_item = app_menu.items()?.len().saturating_sub(1);
+                app_menu.remove_at(last_item)?;
+                let quit_item = tauri::menu::MenuItem::with_id(
+                    handle,
+                    APP_QUIT_MENU_ID,
+                    "Quit Stem Separator",
+                    true,
+                    Some("CmdOrCtrl+Q"),
+                )?;
+                app_menu.append(&quit_item)?;
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == APP_QUIT_MENU_ID {
+                request_app_quit(app);
+            }
+        });
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("error while building Stem Separator");
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-            let separation_active = app_handle
-                .state::<SeparationStatus>()
-                .0
-                .load(Ordering::SeqCst);
-            if code.is_none() && separation_active {
+            if code.is_none() && separation_is_active(app_handle) {
                 api.prevent_exit();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-                let _ = app_handle.emit("app-quit-requested", ());
+                show_quit_confirmation(app_handle);
             }
         }
     });
@@ -2077,11 +2123,37 @@ mod tests {
         model_artifacts_present, model_artifacts_ready, runtime_key_for_capability,
         runtime_key_from_output_name, safe_artifact_name, sha256_file, silent_video_message,
         stage_verified_artifact, validate_model_run, ModelArtifact, ModelOutputBinding, ModelRun,
+        SeparationStatus,
     };
     use std::{
         fs,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         time::{SystemTime, UNIX_EPOCH},
     };
+    use tauri::{Listener, Manager};
+
+    #[test]
+    fn active_separation_turns_a_quit_request_into_a_confirmation_event() {
+        let app = tauri::test::mock_builder()
+            .manage(SeparationStatus::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let confirmation_requested = Arc::new(AtomicBool::new(false));
+        let listener_flag = confirmation_requested.clone();
+        app.listen("app-quit-requested", move |_| {
+            listener_flag.store(true, Ordering::SeqCst);
+        });
+        app.state::<SeparationStatus>()
+            .0
+            .store(true, Ordering::SeqCst);
+
+        super::request_app_quit(app.handle());
+
+        assert!(confirmation_requested.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn registry_artifact_names_cannot_escape_the_model_directory() {

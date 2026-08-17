@@ -96,7 +96,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .content-shell { width: min(980px, calc(100% - clamp(40px, 5vw, 64px))); margin: 0 auto; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: var(--soft) transparent; }
 .select-view { padding: 50px 0 30px; display: flex; flex-direction: column; }
 .page-back-button { width: fit-content; min-height: 32px; align-self: flex-start; margin: 0 0 12px; padding: 0 9px 0 7px; display: inline-flex; align-items: center; gap: 2px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }.page-back-button:hover { color: var(--ink); background: var(--hover); }
-.choose-layout { min-height: 530px; flex: 1; display: grid; grid-template-columns: clamp(225px, 29vw, 290px) minmax(0, 1fr); gap: clamp(18px, 2.7vw, 34px); }
+.choose-layout { min-height: 530px; flex: 1 0 auto; display: grid; grid-template-columns: clamp(225px, 29vw, 290px) minmax(0, 1fr); gap: clamp(18px, 2.7vw, 34px); }
 .file-panel { min-height: 0; padding: 20px; border: 1px solid var(--line); border-radius: 20px; background: color-mix(in srgb, var(--card) 74%, transparent); display: flex; flex-direction: column; position: relative; transition: .18s ease; }
 .file-panel.is-dragging { border-color: var(--accent); background: var(--accent-pale); }.file-panel.is-dragging > :not(.add-drop-hint) { opacity: .12; }
 .add-drop-hint { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--accent); font-size: 12px; font-weight: 650; pointer-events: none; }
@@ -135,7 +135,7 @@ button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent-ri
 .other-stem-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
 .other-stem-grid .stem-card { min-height: 58px; padding: 8px 9px; }
 .no-stems-found { margin: 16px 4px 4px; color: var(--muted); font-size: 11px; }
-.selection-action-bar { min-height: 76px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: flex-end; }.start-button { min-width: 185px; }
+.selection-action-bar { min-height: 76px; flex: 0 0 auto; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: flex-end; }.start-button { min-width: 185px; }
 .glyph-multi { height: 28px; display: flex; align-items: flex-end; gap: 3px; }
 .glyph-multi i { display: block; width: 4px; border-radius: 99px; background: currentColor; }
 .glyph-multi i:nth-child(1) { height: 14px; }.glyph-multi i:nth-child(2) { height: 25px; }.glyph-multi i:nth-child(3) { height: 19px; }.glyph-multi i:nth-child(4) { height: 10px; }
