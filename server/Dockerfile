@@ -12,7 +12,6 @@ RUN npm run build:server-web
 
 FROM nvidia/cuda:12.8.2-base-ubuntu24.04 AS python-deps
 
-ARG AUDIO_SEPARATOR_COMMIT=e66045e5f0a06206d9ea5062cc7dd53df22d38c0
 ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/stem-separator \
     PATH=/opt/stem-separator/bin:$PATH
@@ -23,8 +22,10 @@ RUN apt-get update \
 
 COPY --from=ghcr.io/astral-sh/uv:0.10.11 /uv /usr/local/bin/uv
 COPY server/pyproject.toml server/uv.lock /tmp/server/
+COPY audio-separator-revision.txt /tmp/audio-separator-revision.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv --python /usr/bin/python3.12 --seed /opt/stem-separator \
+    AUDIO_SEPARATOR_COMMIT="$(tr -d '[:space:]' < /tmp/audio-separator-revision.txt)" \
+    && uv venv --python /usr/bin/python3.12 --seed /opt/stem-separator \
     && uv pip install --python /opt/stem-separator/bin/python \
        torch==2.8.0 torchvision==0.23.0 \
        --index-url https://download.pytorch.org/whl/cu128 \
@@ -32,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
        --extra-index-url https://download.pytorch.org/whl/cu128 \
        "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@${AUDIO_SEPARATOR_COMMIT}" \
        torch==2.8.0 torchvision==0.23.0 \
-       "onnxruntime-gpu>=1.21,<1.27" audioread "librosa<0.11" \
+       "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" \
     && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact
 
 FROM python-deps AS server-build

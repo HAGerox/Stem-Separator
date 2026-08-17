@@ -21,7 +21,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff", "aif", "wma",
 ];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "m4v", "avi"];
-const AUDIO_SEPARATOR_FORK: &str = "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@e66045e5f0a06206d9ea5062cc7dd53df22d38c0";
+const AUDIO_SEPARATOR_REVISION: &str = include_str!("../../audio-separator-revision.txt");
 static ARTIFACT_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn bundled_resource(command: &str) -> Option<PathBuf> {
@@ -294,12 +294,19 @@ fn available(command: &str) -> bool {
     command_path(command).is_some()
 }
 
+fn audio_separator_requirement() -> String {
+    format!(
+        "audio-separator[cpu] @ git+https://github.com/HAGerox/python-audio-separator.git@{}",
+        AUDIO_SEPARATOR_REVISION.trim()
+    )
+}
+
 fn separator_engine() -> Option<EngineCommand> {
     if let Some(path) = command_path("audio-separator") {
         return Some(EngineCommand {
             program: path,
             prefix_args: Vec::new(),
-            label: "Audio Separator · bundled HAGerox PR 298 + 299".into(),
+            label: "Audio Separator · bundled pinned runtime".into(),
         });
     }
     if let Some(path) = command_path("uvx") {
@@ -309,14 +316,12 @@ fn separator_engine() -> Option<EngineCommand> {
                 "--python".into(),
                 "3.12".into(),
                 "--with".into(),
-                "audioread".into(),
-                "--with".into(),
                 "librosa<0.11".into(),
                 "--from".into(),
-                AUDIO_SEPARATOR_FORK.into(),
+                audio_separator_requirement(),
                 "audio-separator".into(),
             ],
-            label: "Audio Separator · HAGerox PR 298 + 299".into(),
+            label: "Audio Separator · pinned runtime".into(),
         });
     }
     None

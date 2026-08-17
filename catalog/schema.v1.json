@@ -74,8 +74,8 @@
     "model": {
       "type": "object",
       "required": [
-        "id", "filename", "name", "architecture", "stems", "quality", "speed",
-        "memory", "status", "runtimeValidated", "outputs"
+        "id", "filename", "name", "architecture", "stems", "status",
+        "runtimeValidated", "outputs"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
@@ -88,9 +88,6 @@
           "minItems": 1,
           "uniqueItems": true
         },
-        "quality": { "type": "number", "minimum": 0, "maximum": 100 },
-        "speed": { "type": "number", "minimum": 0, "maximum": 100 },
-        "memory": { "enum": ["low", "medium", "high"] },
         "note": { "type": "string" },
         "source": { "type": "string" },
         "license": { "type": "string" },

@@ -1,4 +1,4 @@
-import fallbackCatalog from "../../catalog/models.v1.json";
+import fallbackProductCatalog from "../../catalog/product-catalog.v1.json";
 import type { Catalog, CatalogCapability, CatalogModel, ModelOutput, ModelRun, StemId } from "../types";
 import { serverMode } from "./runtime";
 
@@ -9,7 +9,7 @@ const REMOTE_PRODUCT_CATALOG_URL = (BUILD_ENV.VITE_MODEL_CATALOG_URL as string |
   || DEFAULT_PRODUCT_CATALOG_URL;
 const REMOTE_REGISTRY_URL = (BUILD_ENV.VITE_MODEL_REGISTRY_URL as string | undefined)
   || DEFAULT_REGISTRY_URL;
-const CACHE_KEY = "stem-separator:model-registry:v5";
+const CACHE_KEY = "stem-separator:model-registry:v6";
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 type RegistryBackend = {
@@ -286,9 +286,6 @@ export function catalogFromProductCatalog(product: ProductCatalog): Catalog {
       name: source.name || modelId,
       architecture: source.architecture || "Unknown",
       stems: [...new Set(stems)],
-      quality: 90,
-      speed: 50,
-      memory: "high",
       note: `Selected by ${product.policy || "the Stem Separator product policy"}.`,
       source: "HAGerox/Stem-Separator-Models product catalog",
       license: source.availability?.license,
@@ -394,9 +391,6 @@ export function catalogFromRegistry(registry: Registry): Catalog {
       name: model.name,
       architecture: model.architecture || "Unknown",
       stems,
-      quality: model.status === "current" ? 96 : model.status === "specialist" ? 94 : 86,
-      speed: 50,
-      memory: "high",
       note: "Selected from the capability-aware HAGerox model registry recommendations.",
       source: "HAGerox/Stem-Separator-Models",
       license: model.availability?.license,
@@ -519,7 +513,10 @@ export async function loadCatalog(): Promise<{ catalog: Catalog; remote: boolean
   }
   return cached && Date.now() - (cached.fetchedAt || 0) <= CACHE_MAX_AGE_MS
     ? { catalog: cached.catalog, remote: true }
-    : { catalog: fallbackCatalog as Catalog, remote: false };
+    : {
+      catalog: catalogFromProductCatalog(fallbackProductCatalog as ProductCatalog),
+      remote: false,
+    };
 }
 
 function recommendation(catalog: Catalog, task: string) {
@@ -539,7 +536,7 @@ export function recommendedMultiTrackModel(catalog: Catalog | null): CatalogMode
     recommendation(catalog, "multitrack_6"),
     recommendation(catalog, "multitrack_4"),
   ].filter(usableCatalogModel);
-  return recommended.sort((a, b) => b.stems.length - a.stems.length || b.quality - a.quality)[0];
+  return recommended.sort((a, b) => b.stems.length - a.stems.length || a.id.localeCompare(b.id))[0];
 }
 
 export function recommendedMultiTrackStems(catalog: Catalog | null): StemId[] {
@@ -626,7 +623,7 @@ export function buildModelPlan(catalog: Catalog, selected: StemId[], multiTrack 
       : catalog.models
         .filter((candidate) => usableCatalogModel(candidate) && candidate.stems.includes(stem)
           && candidate.outputs?.some((output) => output.capability === stem))
-        .sort((a, b) => b.quality - a.quality || b.speed - a.speed)[0];
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
     if (!model) continue;
     const existing = runsByModel.get(model.id);
     if (existing) {

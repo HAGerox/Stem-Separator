@@ -5,7 +5,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="${STEM_SEPARATOR_INSTALL_DIR:-$HOME/.local/share/stem-separator-server/runtime}"
 BIN_DIR="${STEM_SEPARATOR_BIN_DIR:-$HOME/.local/bin}"
-AUDIO_SEPARATOR_COMMIT="e66045e5f0a06206d9ea5062cc7dd53df22d38c0"
+REVISION_FILE="$SCRIPT_DIR/audio-separator-revision.txt"
+if [[ ! -f "$REVISION_FILE" ]]; then
+  REVISION_FILE="$SERVER_DIR/../audio-separator-revision.txt"
+fi
+AUDIO_SEPARATOR_COMMIT="$(tr -d '[:space:]' < "$REVISION_FILE")"
 
 if [[ ! -r /proc/sys/kernel/osrelease ]] || ! grep -qi microsoft /proc/sys/kernel/osrelease; then
   echo "Warning: this installer is intended for Ubuntu on WSL2." >&2
@@ -41,7 +45,7 @@ uv pip install --python "$INSTALL_DIR/bin/python" \
   --extra-index-url https://download.pytorch.org/whl/cu128 \
   "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@$AUDIO_SEPARATOR_COMMIT" \
   torch==2.8.0 torchvision==0.23.0 \
-  "onnxruntime-gpu>=1.21,<1.27" audioread "librosa<0.11" "$SERVER_PACKAGE"
+  "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" "$SERVER_PACKAGE"
 
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server" "$BIN_DIR/stem-separator-server"
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server-update" "$BIN_DIR/stem-separator-server-update"

@@ -20,9 +20,9 @@ export interface CatalogModel {
   name: string;
   architecture: string;
   stems: StemId[];
-  quality: number;
-  speed: number;
-  memory: "low" | "medium" | "high";
+  quality?: number;
+  speed?: number;
+  memory?: "low" | "medium" | "high";
   note: string;
   source?: string;
   license?: string;

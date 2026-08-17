@@ -9,6 +9,7 @@ on:
       - "src/**"
       - "src-tauri/**"
       - "catalog/**"
+      - "audio-separator-revision.txt"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
       - "LICENSE"
@@ -20,6 +21,7 @@ on:
       - "src/**"
       - "src-tauri/**"
       - "catalog/**"
+      - "audio-separator-revision.txt"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
       - "LICENSE"
@@ -94,7 +96,11 @@ jobs:
           test -f "$APP_PATH/Contents/Resources/THIRD-PARTY-NOTICES.md"
           test -f "$APP_PATH/Contents/Resources/FFMPEG-LICENSE.txt"
           test -f "$APP_PATH/Contents/Resources/FFMPEG-BUILD.txt"
-          ! "$APP_PATH/Contents/Resources/bin/ffmpeg" -version 2>&1 | grep -Eq -- '--enable-(gpl|nonfree)'
+          if "$APP_PATH/Contents/Resources/bin/ffmpeg" -version 2>&1 \
+            | grep -Eq -- '--enable-(gpl|nonfree)'; then
+            echo "Bundled FFmpeg unexpectedly enables GPL or nonfree components." >&2
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           "$APP_PATH/Contents/Resources/bin/ffmpeg" -version
           "$APP_PATH/Contents/Resources/bin/audio-separator" --version

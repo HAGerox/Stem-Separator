@@ -55,6 +55,7 @@ jobs:
           mkdir -p artifacts bundle
           cp server/scripts/install-wsl.sh bundle/install.sh
           cp package-output/*.whl bundle/
+          cp audio-separator-revision.txt bundle/
           cp LICENSE THIRD_PARTY_NOTICES.md bundle/
           tar -czf "artifacts/Stem-Separator-Linux-WSL-CUDA.tar.gz" -C bundle .
 

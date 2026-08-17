@@ -6,7 +6,7 @@ RESOURCE_ROOT="$REPOSITORY_ROOT/src-tauri/resources"
 BIN_ROOT="$RESOURCE_ROOT/bin"
 RUNTIME_ROOT="$RESOURCE_ROOT/runtime"
 PYTHON_ROOT="$RESOURCE_ROOT/python"
-AUDIO_SEPARATOR_COMMIT="e66045e5f0a06206d9ea5062cc7dd53df22d38c0"
+AUDIO_SEPARATOR_COMMIT="$(tr -d '[:space:]' < "$REPOSITORY_ROOT/audio-separator-revision.txt")"
 FFMPEG_VERSION="9.0.1"
 FFMPEG_SOURCE_SHA256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
 FFMPEG_SOURCE_URL="https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
@@ -110,7 +110,7 @@ mv "$MANAGED_PYTHON_ROOT" "$PYTHON_ROOT"
 rm -rf "$RESOURCE_ROOT/python-install"
 uv venv --python "$PYTHON_ROOT/bin/python3.12" --relocatable "$RUNTIME_ROOT"
 uv pip install --python "$RUNTIME_ROOT/bin/python" \
-  "$PAS_WHEEL" onnxruntime audioread "librosa<0.11"
+  "$PAS_WHEEL" onnxruntime "librosa<0.11"
 
 # Wheels commonly ship test suites and bytecode caches that are not needed by
 # the application. Keep runtime source, native libraries, metadata, and Torch

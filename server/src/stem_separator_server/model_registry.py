@@ -524,9 +524,6 @@ class ModelRegistry:
                     {"capability": capability, "runtimeKey": runtime_key}
                     for capability, runtime_key in model.get("bindings", {}).items()
                 ],
-                "quality": 96 if model.get("status") == "current" else 94 if model.get("status") == "specialist" else 86,
-                "speed": 50,
-                "memory": "high",
                 "note": "Selected from the capability-aware server model registry.",
                 "source": self.catalog["source"],
                 "license": model.get("license"),
