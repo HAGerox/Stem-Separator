@@ -82,7 +82,11 @@ def test_health_and_environment(tmp_path, monkeypatch):
         page = client.get("/")
         assert page.status_code == 200
         assert '<div id="root"></div>' in page.text
+        assert 'href="/favicon.svg"' in page.text
         assert "CUDA Server" not in page.text
+        favicon = client.get("/favicon.svg")
+        assert favicon.status_code == 200
+        assert "<rect" not in favicon.text
 
 
 def test_upload_rejects_unsupported_extension(tmp_path, monkeypatch):
