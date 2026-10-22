@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
        --extra-index-url https://download.pytorch.org/whl/cu130 \
        "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@${AUDIO_SEPARATOR_COMMIT}" \
        torch==2.14.1 torchvision==0.29.1 \
-       "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" \
+       "onnxruntime-gpu>=1.31,<1.32" "librosa<0.11" \
     && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact
 
 FROM python-deps AS server-build

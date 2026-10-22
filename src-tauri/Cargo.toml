@@ -1,6 +1,6 @@
 [package]
 name = "stem-separator"
-version = "0.3.6"
+version = "0.3.7"
 description = "Desktop app that splits songs into vocals, drums, bass and other parts"
 authors = ["Stem Separator"]
 edition = "2021"

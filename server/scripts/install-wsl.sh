@@ -45,7 +45,7 @@ uv pip install --python "$INSTALL_DIR/bin/python" \
   --extra-index-url https://download.pytorch.org/whl/cu130 \
   "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@$AUDIO_SEPARATOR_COMMIT" \
   torch==2.14.1 torchvision==0.29.1 \
-  "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" "$SERVER_PACKAGE"
+  "onnxruntime-gpu>=1.31,<1.32" "librosa<0.11" "$SERVER_PACKAGE"
 
 SECURITY_CHECK="$SCRIPT_DIR/check-python-security.py"
 if [[ ! -f "$SECURITY_CHECK" ]]; then
@@ -56,7 +56,9 @@ fi
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server" "$BIN_DIR/stem-separator-server"
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server-update" "$BIN_DIR/stem-separator-server-update"
 "$INSTALL_DIR/bin/python" - <<'PY'
+import onnx
 import onnxruntime
+import numpy as np
 import torch
 
 assert torch.cuda.is_available(), "PyTorch cannot access an NVIDIA GPU. Check the Windows NVIDIA driver and WSL GPU passthrough."
@@ -66,6 +68,16 @@ assert value == 8
 onnxruntime.preload_dlls(directory="")
 providers = onnxruntime.get_available_providers()
 assert "CUDAExecutionProvider" in providers, f"ONNX Runtime CUDA provider is unavailable: {providers}"
+graph = onnx.helper.make_graph(
+    [onnx.helper.make_node("Identity", ["x"], ["y"])], "cuda-check",
+    [onnx.helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1])],
+    [onnx.helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1])],
+)
+model = onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 17)])
+model.ir_version = 10
+session = onnxruntime.InferenceSession(model.SerializeToString(), providers=["CUDAExecutionProvider"])
+assert session.get_providers()[0] == "CUDAExecutionProvider", session.get_providers()
+np.testing.assert_array_equal(session.run(None, {"x": np.array([2], dtype=np.float32)})[0], [2])
 print(f"Torch CUDA ready: {device} (CUDA {torch.version.cuda})")
 print(f"ONNX Runtime providers: {providers}")
 PY
