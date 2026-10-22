@@ -23,6 +23,7 @@ RUN apt-get update \
 COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /usr/local/bin/uv
 COPY server/pyproject.toml server/uv.lock /tmp/server/
 COPY audio-separator-revision.txt /tmp/audio-separator-revision.txt
+# Restrict the CUDA index to the Torch install; resolve general packages on PyPI.
 RUN --mount=type=cache,target=/root/.cache/uv \
     AUDIO_SEPARATOR_COMMIT="$(tr -d '[:space:]' < /tmp/audio-separator-revision.txt)" \
     && uv venv --python /usr/bin/python3.12 --seed /opt/stem-separator \
@@ -31,11 +32,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
        torch==2.14.1 torchvision==0.29.1 \
        --index-url https://download.pytorch.org/whl/cu130 \
     && uv pip install --python /opt/stem-separator/bin/python \
-       --extra-index-url https://download.pytorch.org/whl/cu130 \
        "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@${AUDIO_SEPARATOR_COMMIT}" \
        torch==2.14.1 torchvision==0.29.1 \
        "onnxruntime-gpu>=1.31,<1.32" "librosa<0.11" \
-    && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact
+       "requests>=2.34.2" "setuptools>=84.2.1" \
+    && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact \
+    && uvx --python /usr/bin/python3.12 pip-audit \
+       --path /opt/stem-separator/lib/python3.12/site-packages
 
 FROM python-deps AS server-build
 

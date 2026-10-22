@@ -41,8 +41,8 @@ uv venv --python 3.12.15 --clear "$INSTALL_DIR"
 uv pip install --python "$INSTALL_DIR/bin/python" \
   torch==2.14.1 torchvision==0.29.1 \
   --index-url https://download.pytorch.org/whl/cu130
+# Keep installed CUDA Torch wheels; resolve other dependencies on PyPI.
 uv pip install --python "$INSTALL_DIR/bin/python" \
-  --extra-index-url https://download.pytorch.org/whl/cu130 \
   "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@$AUDIO_SEPARATOR_COMMIT" \
   torch==2.14.1 torchvision==0.29.1 \
   "onnxruntime-gpu>=1.31,<1.32" "librosa<0.11" "$SERVER_PACKAGE"
