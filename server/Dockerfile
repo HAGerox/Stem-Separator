@@ -10,7 +10,7 @@ COPY src /source/src
 COPY catalog /source/catalog
 RUN npm run build:server-web
 
-FROM nvidia/cuda:12.8.2-base-ubuntu24.04 AS python-deps
+FROM nvidia/cuda:13.0.3-base-ubuntu24.04 AS python-deps
 
 ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/stem-separator \
@@ -20,19 +20,20 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential ca-certificates git python3.12 python3.12-dev python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.10.11 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /usr/local/bin/uv
 COPY server/pyproject.toml server/uv.lock /tmp/server/
 COPY audio-separator-revision.txt /tmp/audio-separator-revision.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
     AUDIO_SEPARATOR_COMMIT="$(tr -d '[:space:]' < /tmp/audio-separator-revision.txt)" \
     && uv venv --python /usr/bin/python3.12 --seed /opt/stem-separator \
+    && uv pip install --python /opt/stem-separator/bin/python "pip>=26.2.2" "certifi>=2026.10.19" \
     && uv pip install --python /opt/stem-separator/bin/python \
-       torch==2.8.0 torchvision==0.23.0 \
-       --index-url https://download.pytorch.org/whl/cu128 \
+       torch==2.14.1 torchvision==0.29.1 \
+       --index-url https://download.pytorch.org/whl/cu130 \
     && uv pip install --python /opt/stem-separator/bin/python \
-       --extra-index-url https://download.pytorch.org/whl/cu128 \
+       --extra-index-url https://download.pytorch.org/whl/cu130 \
        "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@${AUDIO_SEPARATOR_COMMIT}" \
-       torch==2.8.0 torchvision==0.23.0 \
+       torch==2.14.1 torchvision==0.29.1 \
        "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" \
     && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact
 
@@ -44,7 +45,7 @@ COPY server/src /app/server/src
 COPY --from=web-build /source/server/src/stem_separator_server/web /app/server/src/stem_separator_server/web
 RUN uv build --wheel --out-dir /app/wheels /app/server
 
-FROM nvidia/cuda:12.8.2-base-ubuntu24.04
+FROM nvidia/cuda:13.0.3-base-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -65,10 +66,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/stem-separator/
+COPY scripts/check-python-security.py /usr/share/doc/stem-separator/
 COPY --from=python-deps /opt/stem-separator /opt/stem-separator
 COPY --from=server-build /app/wheels /tmp/wheels
 RUN /opt/stem-separator/bin/pip install --no-deps /tmp/wheels/*.whl \
     && rm -rf /tmp/wheels \
+    && /opt/stem-separator/bin/python /usr/share/doc/stem-separator/check-python-security.py /opt/stem-separator \
     && /opt/stem-separator/bin/python -c "import onnxruntime, torch; onnxruntime.preload_dlls(directory=''); assert 'CUDAExecutionProvider' in onnxruntime.get_available_providers(); print(f'PyTorch {torch.__version__}, CUDA {torch.version.cuda}, ONNX providers {onnxruntime.get_available_providers()}')"
 
 ENV NUMBA_CACHE_DIR=/data/.cache/numba

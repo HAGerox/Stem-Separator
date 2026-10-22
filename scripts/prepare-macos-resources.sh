@@ -103,14 +103,17 @@ if [[ -e "$RESOURCE_ROOT/python-install" ]]; then
   echo "Refusing to replace unexpected Python staging path: $RESOURCE_ROOT/python-install" >&2
   exit 1
 fi
-UV_PYTHON_INSTALL_DIR="$RESOURCE_ROOT/python-install" uv python install 3.12.13 --no-bin
-MANAGED_PYTHON="$(UV_PYTHON_INSTALL_DIR="$RESOURCE_ROOT/python-install" uv python find 3.12.13)"
+UV_PYTHON_INSTALL_DIR="$RESOURCE_ROOT/python-install" uv python install 3.12.15 --no-bin
+MANAGED_PYTHON="$(UV_PYTHON_INSTALL_DIR="$RESOURCE_ROOT/python-install" uv python find 3.12.15)"
 MANAGED_PYTHON_ROOT="$(cd -- "$(dirname -- "$MANAGED_PYTHON")/.." && pwd -P)"
 mv "$MANAGED_PYTHON_ROOT" "$PYTHON_ROOT"
 rm -rf "$RESOURCE_ROOT/python-install"
 uv venv --python "$PYTHON_ROOT/bin/python3.12" --relocatable "$RUNTIME_ROOT"
 uv pip install --python "$RUNTIME_ROOT/bin/python" \
-  "$PAS_WHEEL" onnxruntime "librosa<0.11"
+  "$PAS_WHEEL" onnxruntime "librosa<0.11" \
+  "certifi>=2026.10.19" "pillow>=13.0.0" "urllib3>=2.8.0"
+PYTHONPATH="$RUNTIME_ROOT/lib/python3.12/site-packages" \
+  "$PYTHON_ROOT/bin/python3.12" "$REPOSITORY_ROOT/scripts/check-python-security.py"
 
 # Wheels commonly ship test suites and bytecode caches that are not needed by
 # the application. Keep runtime source, native libraries, metadata, and Torch

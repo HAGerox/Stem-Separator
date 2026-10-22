@@ -8,7 +8,7 @@ Quick start from the repository root:
 docker compose -f server/compose.yaml up --build
 ```
 
-The host needs an NVIDIA driver and NVIDIA Container Toolkit, but not a separately installed CUDA toolkit. The image includes its compatible CUDA 12.8/PyTorch/ONNX user-space runtime.
+The host needs an NVIDIA R580 or newer driver ([CUDA compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)) and NVIDIA Container Toolkit, but not a separately installed CUDA toolkit. The image includes its compatible CUDA 13.0/PyTorch/ONNX user-space runtime.
 
 Then open `http://localhost:7860`. See the repository root README for native WSL installation, CUDA checks, endpoints, environment variables, and workflow artifacts.
 

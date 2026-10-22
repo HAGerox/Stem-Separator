@@ -37,15 +37,21 @@ if ! [[ -f "$SERVER_DIR/pyproject.toml" ]]; then
 fi
 
 mkdir -p "$BIN_DIR"
-uv venv --python 3.12 --allow-existing "$INSTALL_DIR"
+uv venv --python 3.12.15 --clear "$INSTALL_DIR"
 uv pip install --python "$INSTALL_DIR/bin/python" \
-  torch==2.8.0 torchvision==0.23.0 \
-  --index-url https://download.pytorch.org/whl/cu128
+  torch==2.14.1 torchvision==0.29.1 \
+  --index-url https://download.pytorch.org/whl/cu130
 uv pip install --python "$INSTALL_DIR/bin/python" \
-  --extra-index-url https://download.pytorch.org/whl/cu128 \
+  --extra-index-url https://download.pytorch.org/whl/cu130 \
   "audio-separator[gpu] @ git+https://github.com/HAGerox/python-audio-separator.git@$AUDIO_SEPARATOR_COMMIT" \
-  torch==2.8.0 torchvision==0.23.0 \
+  torch==2.14.1 torchvision==0.29.1 \
   "onnxruntime-gpu>=1.21,<1.27" "librosa<0.11" "$SERVER_PACKAGE"
+
+SECURITY_CHECK="$SCRIPT_DIR/check-python-security.py"
+if [[ ! -f "$SECURITY_CHECK" ]]; then
+  SECURITY_CHECK="$SERVER_DIR/../scripts/check-python-security.py"
+fi
+"$INSTALL_DIR/bin/python" "$SECURITY_CHECK"
 
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server" "$BIN_DIR/stem-separator-server"
 ln -sfn "$INSTALL_DIR/bin/stem-separator-server-update" "$BIN_DIR/stem-separator-server-update"

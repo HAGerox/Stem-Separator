@@ -12,6 +12,7 @@ on:
       - "audio-separator-revision.txt"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
+      - "scripts/check-python-security.py"
       - "LICENSE"
       - "THIRD_PARTY_NOTICES.md"
       - "package*.json"
@@ -24,6 +25,7 @@ on:
       - "audio-separator-revision.txt"
       - "scripts/prepare-macos-resources.sh"
       - "scripts/package-macos-dmg.sh"
+      - "scripts/check-python-security.py"
       - "LICENSE"
       - "THIRD_PARTY_NOTICES.md"
       - "package*.json"
@@ -57,7 +59,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version: "0.10.11"
+          version: "0.13.5"
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
@@ -102,6 +104,7 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          python3 scripts/check-python-security.py "$APP_PATH"
           "$APP_PATH/Contents/Resources/bin/ffmpeg" -version
           "$APP_PATH/Contents/Resources/bin/audio-separator" --version
 
