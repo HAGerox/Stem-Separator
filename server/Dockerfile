@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
        "onnxruntime-gpu>=1.31,<1.32" "librosa<0.11" \
        "requests>=2.34.2" "setuptools>=84.2.1" \
     && uv sync --project /tmp/server --active --locked --no-dev --no-install-project --inexact \
-    && uvx --python /usr/bin/python3.12 pip-audit \
+    && uv tool run --python /usr/bin/python3.12 pip-audit \
        --path /opt/stem-separator/lib/python3.12/site-packages
 
 FROM python-deps AS server-build
