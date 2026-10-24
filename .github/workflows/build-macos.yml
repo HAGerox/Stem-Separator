@@ -143,7 +143,7 @@ jobs:
           name: stem-separator-macos-arm64-unsigned
           path: artifacts/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
           compression-level: 0
 
   publish:
@@ -151,6 +151,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     permissions:
+      actions: write
       contents: write
       id-token: write
       attestations: write
@@ -183,3 +184,11 @@ jobs:
             artifacts/latest.json \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+      - name: Delete consumed build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "stem-separator-macos-arm64-unsigned") | .id' \
+            | xargs -I{} gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/{}"
